@@ -46,4 +46,5 @@ def load_config(root: Path) -> dict:
     if not path.exists():
         print(f"ERROR: {path} not found (run workflow-init first)", file=sys.stderr)
         raise SystemExit(2)
-    return json.loads(path.read_text(encoding="utf-8"))
+    # utf-8-sig: tolerate the BOM that PowerShell 5.1's `-Encoding utf8` writes
+    return json.loads(path.read_text(encoding="utf-8-sig"))

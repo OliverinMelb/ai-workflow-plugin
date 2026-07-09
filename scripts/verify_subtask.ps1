@@ -9,7 +9,14 @@ param(
   [string]$TaskId,
 
   [Parameter(Mandatory = $true)]
-  [string]$SubtaskId
+  [string]$SubtaskId,
+
+  # Small-tier tasks work directly on a branch without an assigned worktree /
+  # registry entry. Pass -WorktreePath (the tree to verify, e.g. the main
+  # checkout) together with -Workflow to verify without a registry lookup.
+  [string]$WorktreePath,
+
+  [string]$Workflow
 )
 
 $ErrorActionPreference = 'Stop'
@@ -17,18 +24,24 @@ $ErrorActionPreference = 'Stop'
 
 $repoRoot = Get-MainRoot
 $config = Get-WorkflowConfig $repoRoot
-$registryPath = Join-Path $repoRoot 'workflow\state\worktree-registry.json'
-$registry = Get-Content $registryPath -Raw | ConvertFrom-Json
 
-$entry = $null
-foreach ($t in $registry.tasks) {
-  if ($t.task_id -eq $TaskId) {
-    foreach ($s in $t.subtasks) {
-      if ($s.subtask_id -eq $SubtaskId) { $entry = $s }
+if ($WorktreePath) {
+  if (-not $Workflow) { throw "-WorktreePath requires -Workflow <class>" }
+  $entry = [pscustomobject]@{ worktree_path = $WorktreePath; workflow = $Workflow }
+} else {
+  $registryPath = Join-Path $repoRoot 'workflow\state\worktree-registry.json'
+  $registry = Get-Content $registryPath -Raw | ConvertFrom-Json
+
+  $entry = $null
+  foreach ($t in $registry.tasks) {
+    if ($t.task_id -eq $TaskId) {
+      foreach ($s in $t.subtasks) {
+        if ($s.subtask_id -eq $SubtaskId) { $entry = $s }
+      }
     }
   }
+  if (-not $entry) { throw "Subtask not found in registry: $TaskId / $SubtaskId (small-tier direct-branch work: pass -WorktreePath and -Workflow instead)" }
 }
-if (-not $entry) { throw "Subtask not found in registry: $TaskId / $SubtaskId" }
 
 $worktree = $entry.worktree_path -replace '/', '\'
 if (-not (Test-Path $worktree)) { throw "Worktree path does not exist: $worktree" }
@@ -46,7 +59,10 @@ foreach ($group in $groupNames) {
   if (-not $groupChecks) { throw "Check group '$group' not defined in config.checks" }
   foreach ($c in $groupChecks) {
     $cmd = if ($c.cmd -eq 'python') { $python } else { $c.cmd }
-    $checks += @{ name = $c.name; dir = $c.dir; cmd = $cmd; args = @($c.args) }
+    # "{engine}/foo.py" in args resolves to the plugin's scripts dir, so
+    # project configs never hardcode where the engine lives.
+    $resolvedArgs = @($c.args | ForEach-Object { $_ -replace '^\{engine\}', ($PSScriptRoot -replace '\\', '/') })
+    $checks += @{ name = $c.name; dir = $c.dir; cmd = $cmd; args = $resolvedArgs }
   }
 }
 

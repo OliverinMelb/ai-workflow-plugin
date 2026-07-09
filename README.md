@@ -10,7 +10,12 @@
   `~/.claude/CLAUDE.md` 索引）；项目层在各仓库 wiki/lessons。判据：
   换一个项目仍成立 → 全局，否则 → 项目。
 
-## 当前内容（v0.2，P2 阶段）
+## 当前内容（v1.0）
+
+> v1.0 收束记录：P3 移植验收于 2026-07-09 在第二个项目（Nuxt 技术栈）通过——
+> 全流程（init 检查/分级建包/实现/独立复验/Playwright 行为验收/闭环）零次翻阅
+> 首个项目；摩擦项已修（small 级直验 `-WorktreePath`、复验并发预检、maker
+> check 目录纪律）。
 
 - `hooks/hooks.json` + `scripts/hooks/`：
   - `guard_worktree_scope`（PreToolUse）：worktree 写入边界硬门禁
@@ -79,9 +84,10 @@
 约定：检查里 `cmd: "python"` 由引擎解析为 项目 venv > `WORKFLOW_PYTHON`
 （用户级 settings env）> PATH，并验证可运行（Windows Store 别名会 exit 9009）。
 
-## 路线图
+## 后续方向（v1.0 之后，按需）
 
-- P2：五个 skills（workflow-init / task-new / task-assign / task-verify /
-  task-close），编排脚本迁入并由 skills 包装
-- P3：第二个项目移植验收（收束标准：新项目 ≤30 分钟人工介入走完最小闭环，
-  零次翻阅首个项目）
+- 跨平台：引擎目前是 PowerShell 5.1 / Windows 专用；出现非 Windows 项目时
+  评估移植成 python
+- bootstrap 组件类型扩展：目前只有 python-venv / node（npm）；pnpm/yarn/
+  go/docker 组件出现时按需加
+- e2e 检查组范式：Playwright spec 进 config checks（P3 已验证可行）

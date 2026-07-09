@@ -1,105 +1,211 @@
-{
-  "$comment": "Project-specific workflow configuration. The scripts in workflow/scripts/ are a generic engine; EVERYTHING project-specific lives here. When porting the workflow to another project, copy the engine and rewrite only this file.",
-  "project_name": "AI Helper",
-  "memory": {
-    "pointers": [
-      "Project wiki: docs/wiki/ (project-brief, api-reference, frontend-map, feature-history, environment)",
-      "Agent rules: AGENTS.md | Workflow protocol: workflow/README.md",
-      "Invariants: workflow/context/invariants.md | Lessons: workflow/context/lessons.md"
-    ],
-    "global_memory_dir": "~/.claude/workflow-memory"
-  },
-  "python": {
-    "venv": "ai_helper_backend/.venv"
-  },
-  "components": {
-    "backend": {
-      "dir": "ai_helper_backend",
-      "type": "python-venv",
-      "probe_imports": ["pytest", "ruff"]
-    },
-    "frontend": {
-      "dir": "ai_helper_frontend",
-      "type": "node",
-      "probe_modules": ["typescript", "vitest", "vite"],
-      "install_env": { "ELECTRON_SKIP_BINARY_DOWNLOAD": "1" }
-    }
-  },
-  "checks": {
-    "backend": [
-      { "name": "pytest", "dir": "ai_helper_backend", "cmd": "python", "args": ["-m", "pytest"] },
-      { "name": "ruff", "dir": "ai_helper_backend", "cmd": "python", "args": ["-m", "ruff", "check", "."] }
-    ],
-    "frontend": [
-      { "name": "typecheck", "dir": "ai_helper_frontend", "cmd": "npm", "args": ["run", "typecheck"] },
-      { "name": "build", "dir": "ai_helper_frontend", "cmd": "npm", "args": ["run", "build"], "$comment": "build runs BEFORE test: tests/preloadBundle.test.ts reads dist-electron output" },
-      { "name": "vitest", "dir": "ai_helper_frontend", "cmd": "npm", "args": ["run", "test"] }
-    ],
-    "checkers": [
-      { "name": "contract-touchpoints", "dir": "", "cmd": "python", "args": ["workflow/scripts/check_contract_touchpoints.py"] },
-      { "name": "env-consistency", "dir": "", "cmd": "python", "args": ["workflow/scripts/check_env_consistency.py"] }
-    ]
-  },
-  "workflow_classes": {
-    "backend-change": ["backend"],
-    "frontend-change": ["frontend"],
-    "contract-change": ["backend", "frontend", "checkers"],
-    "maintenance-loop": ["checkers"]
-  },
-  "auto_check": {
-    "$comment": "PostToolUse fast maker check: run on files matching path_contains + extension",
-    "path_contains": "ai_helper_backend",
-    "extension": ".py",
-    "cmd": "python",
-    "args": ["-m", "ruff", "check"]
-  },
-  "contract_touchpoints": {
-    "$comment": "Data for check_contract_touchpoints.py: which paths count as contract surface, and structural markers that must survive any contract-touching diff",
-    "surface_markers": [
-      "ai_helper_backend/app/api/",
-      "ai_helper_backend/app/schemas/",
-      "ai_helper_backend/app/services/",
-      "ai_helper_frontend/src/renderer/api/",
-      "ai_helper_frontend/src/shared/",
-      "ai_helper_frontend/src/preload/",
-      "ai_helper_frontend/src/main/ipc"
-    ],
-    "structural_checks": [
-      {
-        "file": "ai_helper_backend/app/api/v1/router.py",
-        "must_contain": [
-          "include_router(auth.router",
-          "include_router(resumes.router",
-          "include_router(analyses.router",
-          "include_router(asr.router"
-        ],
-        "error": "backend router missing an include_router marker"
-      },
-      {
-        "file": "ai_helper_backend/app/api/v1/endpoints/health.py",
-        "must_contain": ["/health"],
-        "error": "backend health endpoint missing /health route"
-      },
-      {
-        "file": "ai_helper_frontend/src/renderer/api/backendClient.ts",
-        "must_contain": ["/api/v1"],
-        "error": "frontend backend client does not target versioned API paths"
-      },
-      {
-        "file": "ai_helper_frontend/src/renderer/api/realtimeAsrClient.ts",
-        "must_contain": ["WebSocket"],
-        "error": "frontend realtime ASR client no longer opens websocket connections"
-      }
-    ]
-  },
-  "env_consistency": {
-    "$comment": "Data for check_env_consistency.py: each rule asserts a file contains a marker",
-    "rules": [
-      { "file": "ai_helper_backend/.env.example", "must_contain": "OPENAI_API_KEY", "error": "backend .env.example is missing OPENAI_API_KEY" },
-      { "file": "ai_helper_backend/.env.example", "must_contain": "DATABASE_URL", "error": "backend .env.example is missing DATABASE_URL" },
-      { "file": "ai_helper_frontend/.env.example", "must_contain": "VITE_BACKEND_BASE_URL=http://127.0.0.1:8000", "error": "frontend .env.example does not preserve the local backend default" },
-      { "file": "ai_helper_frontend/src/shared/constants.ts", "must_contain": "\"http://127.0.0.1:8000\"", "error": "frontend shared constants do not expose the expected default backend URL" },
-      { "file": "ai_helper_backend/app/core/config.py", "must_contain": "cors_allowed_origins", "error": "backend config no longer defines cors_allowed_origins" }
-    ]
-  }
+﻿{
+    "$comment":  "Project-specific workflow configuration. The engine (scripts/hooks/skills) ships with the ai-workflow plugin; EVERYTHING project-specific lives here. Porting to another project = install the plugin + write this file. {engine}/ in check args resolves to the plugin scripts dir.",
+    "project_name":  "AI Helper",
+    "memory":  {
+                   "pointers":  [
+                                    "Project wiki: docs/wiki/ (project-brief, api-reference, frontend-map, feature-history, environment)",
+                                    "Agent rules: AGENTS.md | Workflow protocol: workflow/README.md",
+                                    "Invariants: workflow/context/invariants.md | Lessons: workflow/context/lessons.md"
+                                ],
+                   "global_memory_dir":  "~/.claude/workflow-memory"
+               },
+    "python":  {
+                   "venv":  "ai_helper_backend/.venv"
+               },
+    "components":  {
+                       "backend":  {
+                                       "dir":  "ai_helper_backend",
+                                       "type":  "python-venv",
+                                       "probe_imports":  [
+                                                             "pytest",
+                                                             "ruff"
+                                                         ]
+                                   },
+                       "frontend":  {
+                                        "dir":  "ai_helper_frontend",
+                                        "type":  "node",
+                                        "probe_modules":  [
+                                                              "typescript",
+                                                              "vitest",
+                                                              "vite"
+                                                          ],
+                                        "install_env":  {
+                                                            "ELECTRON_SKIP_BINARY_DOWNLOAD":  "1"
+                                                        }
+                                    }
+                   },
+    "checks":  {
+                   "backend":  [
+                                   {
+                                       "name":  "pytest",
+                                       "dir":  "ai_helper_backend",
+                                       "cmd":  "python",
+                                       "args":  [
+                                                    "-m",
+                                                    "pytest"
+                                                ]
+                                   },
+                                   {
+                                       "name":  "ruff",
+                                       "dir":  "ai_helper_backend",
+                                       "cmd":  "python",
+                                       "args":  [
+                                                    "-m",
+                                                    "ruff",
+                                                    "check",
+                                                    "."
+                                                ]
+                                   }
+                               ],
+                   "frontend":  [
+                                    {
+                                        "name":  "typecheck",
+                                        "dir":  "ai_helper_frontend",
+                                        "cmd":  "npm",
+                                        "args":  [
+                                                     "run",
+                                                     "typecheck"
+                                                 ]
+                                    },
+                                    {
+                                        "name":  "build",
+                                        "dir":  "ai_helper_frontend",
+                                        "cmd":  "npm",
+                                        "args":  [
+                                                     "run",
+                                                     "build"
+                                                 ],
+                                        "$comment":  "build runs BEFORE test: tests/preloadBundle.test.ts reads dist-electron output"
+                                    },
+                                    {
+                                        "name":  "vitest",
+                                        "dir":  "ai_helper_frontend",
+                                        "cmd":  "npm",
+                                        "args":  [
+                                                     "run",
+                                                     "test"
+                                                 ]
+                                    }
+                                ],
+                   "checkers":  [
+                                    {
+                                        "name":  "contract-touchpoints",
+                                        "dir":  "",
+                                        "cmd":  "python",
+                                        "args":  [
+                                                     "{engine}/check_contract_touchpoints.py"
+                                                 ]
+                                    },
+                                    {
+                                        "name":  "env-consistency",
+                                        "dir":  "",
+                                        "cmd":  "python",
+                                        "args":  [
+                                                     "{engine}/check_env_consistency.py"
+                                                 ]
+                                    }
+                                ]
+               },
+    "workflow_classes":  {
+                             "backend-change":  [
+                                                    "backend"
+                                                ],
+                             "frontend-change":  [
+                                                     "frontend"
+                                                 ],
+                             "contract-change":  [
+                                                     "backend",
+                                                     "frontend",
+                                                     "checkers"
+                                                 ],
+                             "maintenance-loop":  [
+                                                      "checkers"
+                                                  ]
+                         },
+    "auto_check":  {
+                       "$comment":  "PostToolUse fast maker check: run on files matching path_contains + extension",
+                       "path_contains":  "ai_helper_backend",
+                       "extension":  ".py",
+                       "cmd":  "python",
+                       "args":  [
+                                    "-m",
+                                    "ruff",
+                                    "check"
+                                ]
+                   },
+    "contract_touchpoints":  {
+                                 "$comment":  "Data for check_contract_touchpoints.py: which paths count as contract surface, and structural markers that must survive any contract-touching diff",
+                                 "surface_markers":  [
+                                                         "ai_helper_backend/app/api/",
+                                                         "ai_helper_backend/app/schemas/",
+                                                         "ai_helper_backend/app/services/",
+                                                         "ai_helper_frontend/src/renderer/api/",
+                                                         "ai_helper_frontend/src/shared/",
+                                                         "ai_helper_frontend/src/preload/",
+                                                         "ai_helper_frontend/src/main/ipc"
+                                                     ],
+                                 "structural_checks":  [
+                                                           {
+                                                               "file":  "ai_helper_backend/app/api/v1/router.py",
+                                                               "must_contain":  [
+                                                                                    "include_router(auth.router",
+                                                                                    "include_router(resumes.router",
+                                                                                    "include_router(analyses.router",
+                                                                                    "include_router(asr.router"
+                                                                                ],
+                                                               "error":  "backend router missing an include_router marker"
+                                                           },
+                                                           {
+                                                               "file":  "ai_helper_backend/app/api/v1/endpoints/health.py",
+                                                               "must_contain":  [
+                                                                                    "/health"
+                                                                                ],
+                                                               "error":  "backend health endpoint missing /health route"
+                                                           },
+                                                           {
+                                                               "file":  "ai_helper_frontend/src/renderer/api/backendClient.ts",
+                                                               "must_contain":  [
+                                                                                    "/api/v1"
+                                                                                ],
+                                                               "error":  "frontend backend client does not target versioned API paths"
+                                                           },
+                                                           {
+                                                               "file":  "ai_helper_frontend/src/renderer/api/realtimeAsrClient.ts",
+                                                               "must_contain":  [
+                                                                                    "WebSocket"
+                                                                                ],
+                                                               "error":  "frontend realtime ASR client no longer opens websocket connections"
+                                                           }
+                                                       ]
+                             },
+    "env_consistency":  {
+                            "$comment":  "Data for check_env_consistency.py: each rule asserts a file contains a marker",
+                            "rules":  [
+                                          {
+                                              "file":  "ai_helper_backend/.env.example",
+                                              "must_contain":  "OPENAI_API_KEY",
+                                              "error":  "backend .env.example is missing OPENAI_API_KEY"
+                                          },
+                                          {
+                                              "file":  "ai_helper_backend/.env.example",
+                                              "must_contain":  "DATABASE_URL",
+                                              "error":  "backend .env.example is missing DATABASE_URL"
+                                          },
+                                          {
+                                              "file":  "ai_helper_frontend/.env.example",
+                                              "must_contain":  "VITE_BACKEND_BASE_URL=http://127.0.0.1:8000",
+                                              "error":  "frontend .env.example does not preserve the local backend default"
+                                          },
+                                          {
+                                              "file":  "ai_helper_frontend/src/shared/constants.ts",
+                                              "must_contain":  "\"http://127.0.0.1:8000\"",
+                                              "error":  "frontend shared constants do not expose the expected default backend URL"
+                                          },
+                                          {
+                                              "file":  "ai_helper_backend/app/core/config.py",
+                                              "must_contain":  "cors_allowed_origins",
+                                              "error":  "backend config no longer defines cors_allowed_origins"
+                                          }
+                                      ]
+                        }
 }

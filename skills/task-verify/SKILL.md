@@ -9,11 +9,21 @@ description: 对 ai-workflow 子任务做独立复验：在其 worktree 里重�
 
 ## 步骤
 
+0. **环境预检（并发假阴性防护）**：确认没有 dev server / watch 进程正在运行——
+   dev 与生产构建常共用中间目录（如 nuxt 的 `.nuxt`、vite 缓存），并发时构建会
+   假失败。先停掉再复验；复验 FAIL 时也先排查并发再怀疑代码。
+
 1. 独立复验（从项目根运行；矩阵按 config 的 workflow class 展开）：
    ```powershell
    powershell -NoProfile -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/verify_subtask.ps1" -TaskId <task-id> -SubtaskId <subtask-id>
    ```
    产出 `workflow/tasks/<task-id>/subtask-summaries/<subtask-id>.verify.md`，exit 0 = 全过。
+
+   **small 级（无 worktree、直接在分支上做的任务）**：没有 registry 条目，
+   改用直验形式，不要手工补登 registry：
+   ```powershell
+   ... verify_subtask.ps1 -TaskId <task-id> -SubtaskId main -WorktreePath <项目根> -Workflow <class>
+   ```
 
 2. FAIL 处理：读证据文件里的失败输出，把失败信息回给实现子代理修复（同一 worktree），修完重跑本步骤。**不要自己在主 checkout 里修**。
 
