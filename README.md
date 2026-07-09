@@ -1,6 +1,18 @@
 # ai-workflow plugin
 
-可复用的多 worktree 代理工作流引擎（Claude Code plugin）。设计原则：
+可复用的多 worktree 代理工作流引擎（Claude Code plugin）。
+
+> **状态：early（v1.0）**。在 2 个真实项目（FastAPI+Electron、Nuxt）上完成
+> 移植验收，但只在 1 台机器上跑过——假设它有坑，欢迎 issue。
+>
+> **环境要求**：Windows（NTFS junction / PowerShell 5.1+）、git、
+> Claude Code。引擎目前是 Windows 专用；跨平台移植在路线图上，
+> 有需求请开 issue。
+>
+> **安装**：`/plugin marketplace add <本仓库>` 后 install，
+> 在自己的项目里跑 `/workflow-init` 接入。License: MIT。
+
+设计原则：
 
 - **引擎带"怎么做"，项目仓库带"做了什么"**：脚本/hooks/agents 在 plugin 里，
   任务包、worktree 注册表、教训、以及一切项目特定事实留在各项目仓库。
