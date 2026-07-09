@@ -1,0 +1,34 @@
+---
+name: task-new
+description: 按 ai-workflow 协议开始一个新任务：分级路由(trivial/small/standard)、创建任务包、填写 brief。当用户提出一个新的开发需求且项目有 workflow/config.json 时使用。trivial 级(单文件改动、文案、配置)不建包，直接做。
+---
+
+# task-new：任务分级 + 建任务包
+
+## 第一步：分级路由（先判级，再决定流程重量）
+
+- **trivial**：单文件小改、文案、配置调整 → **不建任务包**，直接实现 + 跑该文件所属组件的检查，结束。
+- **small**：单一子任务、影响面清晰、无契约变更 → 建任务包（只需 brief + summary），可在 task 分支直接做，跳过设计门。
+- **standard**：多子任务 / 跨组件 / 契约变更 → 完整流程：brief → spec → plan → 设计门（workflow/templates/design-review.md）→ 子任务拆分。
+
+判级拿不准时向用户报告你的判断和理由，倾向低一级（流程越重越贵）。
+
+## 第二步：建包（small/standard）
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/new_task.ps1" -Title "<英文短标题>" -Workflow <workflow-class> -NoWorktree
+```
+
+- Title 用短英文（生成的 task_id 有 MAX_PATH 风险，见全局环境记忆）。
+- workflow-class 从项目 workflow/config.json 的 workflow_classes 里选。
+- small 级加 `-NoWorktree` 后自己开 task 分支；standard 级由 task-assign 为每个子任务开 worktree。
+
+## 第三步：填 brief.md
+
+覆盖模板占位内容，必须包含：Goal、Context（已知事实，引用两层记忆避免重新踩坑）、Deliverables、**可验收的 Acceptance Criteria**（每条都要能被命令或文件存在性验证）、Stop Conditions。
+
+standard 级继续填 spec/plan 并走设计门后才能拆子任务（一次一个子任务一个 worktree）。
+
+## 完成标准
+- [ ] 分级判断已明示给用户
+- [ ] small/standard：任务包目录存在且 brief 已填（非模板原文）

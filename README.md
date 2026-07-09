@@ -10,19 +10,28 @@
   `~/.claude/CLAUDE.md` 索引）；项目层在各仓库 wiki/lessons。判据：
   换一个项目仍成立 → 全局，否则 → 项目。
 
-## 当前内容（v0.1，P1 阶段）
+## 当前内容（v0.2，P2 阶段）
 
 - `hooks/hooks.json` + `scripts/hooks/`：
   - `guard_worktree_scope`（PreToolUse）：worktree 写入边界硬门禁
   - `auto_check`（PostToolUse）：按 config 规则对刚写入的文件做快速检查
   - `session_start`（SessionStart）：注入项目 + 全局两层记忆指针
   - 三者都在**没有 `workflow/config.json` 的项目里静默跳过**
-- `agents/`：通用 `implementer` / `reviewer`（项目可用自己的
-  `.claude/agents/` 特化版覆盖，特化版优先）
-
-编排脚本（new_task / assign_worktree / verify_subtask / bootstrap /
-render_subagent_prompt / checkers）目前仍在首个消费项目（ai_helper）的
-`workflow/scripts/` 里，P2 做 skills 时随包装一起迁入，避免过渡期双份漂移。
+- `scripts/`：全部编排引擎（new_task / new_subtask / assign_worktree /
+  render_subagent_prompt / verify_subtask / assemble_reviewer_packet /
+  bootstrap / 三个检查器 / register_worktree）。项目根一律从 cwd 经 git
+  解析（`_lib.ps1` / `_lib.py`）：状态类脚本用主 checkout 根，检查器用
+  所在树的根（worktree 感知——修复了老版本"在 worktree 跑检查器却检查
+  主 checkout"的隐性 bug）。
+- `skills/`：五个流程 skill
+  - `/workflow-init`：新项目脚手架（scaffold/ 拷贝 + config 引导）
+  - `/task-new`：分级路由（trivial 不建包）+ 建任务包
+  - `/task-assign`：子任务 → worktree（自动 bootstrap）→ 渲染提示词 → 派发
+  - `/task-verify`：独立复验 + fast/full lane 判定
+  - `/task-close`：闭环清单（summary/两层记忆分拣/wiki/清理）
+- `agents/`：通用 `implementer` / `reviewer`（项目特化版优先）
+- `scaffold/`：workflow-init 的铺骨架素材（templates/checks/registry/
+  config.example.json）
 
 ## 安装（本地目录 marketplace）
 
