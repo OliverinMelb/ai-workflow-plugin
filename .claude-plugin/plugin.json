@@ -1,0 +1,6 @@
+{
+  "name": "ai-workflow",
+  "description": "Multi-worktree agent workflow engine: task packets, worktree discipline hooks, independent re-verification, two-tier memory. Project specifics live in each repo's workflow/config.json.",
+  "version": "0.1.0",
+  "author": { "name": "shiqi" }
+}

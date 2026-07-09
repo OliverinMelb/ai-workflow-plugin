@@ -1,0 +1,11 @@
+{
+  "name": "ai-workflow-local",
+  "owner": { "name": "shiqi" },
+  "plugins": [
+    {
+      "name": "ai-workflow",
+      "source": "./",
+      "description": "Multi-worktree agent workflow engine (hooks, agents, scripts). Requires workflow/config.json in the consuming project."
+    }
+  ]
+}
