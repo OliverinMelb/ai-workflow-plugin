@@ -2,20 +2,24 @@
 
 ## Task Sizing (route BEFORE creating any task packet)
 
-- **Micro** (copy/style/docs/config tweak, single file, no logic or contract
-  change): main session edits directly on the current task branch, runs the
-  relevant checks, commits. NO task packet, NO subtask, NO worktree. The
-  commit message is the record.
-- **Small** (single file/module, no contract touchpoints): one task packet
-  with brief.md only, one subtask, SKIP the design review gate, fast lane
-  review. Worktree optional if the change is isolated.
-- **Medium/large or any contract change**: full chain (packet, design gate,
-  subtask worktrees, independent re-verification, full lane review).
+- **Micro** (copy/style/docs/config tweak, up to 2-3 files, no contract
+  change, no new dependency): main session edits directly on the current task
+  branch, runs the relevant checks, commits. NO task packet, NO subtask, NO
+  worktree. The commit message is the record.
+- **Small** (DEFAULT tier — no contract touchpoints): one task packet with
+  brief.md only, one subtask, SKIP the design review gate, fast lane review.
+  Worktree optional if the change is isolated.
+- **Standard** (ONLY when a contract changes — API payload / endpoint /
+  websocket / IPC / env semantics — or the work genuinely needs multiple
+  parallel subtask worktrees): full chain (packet, design gate checklist in
+  brief.md, subtask worktrees, independent re-verification, full lane review).
+  Name which trigger applied when routing here.
 - **Workflow-only changes** follow the same sizing; verification = workflow
   checker scripts.
 
-When unsure between two tiers, pick the heavier one. Hooks apply to every
-tier — micro tasks still get auto-checked on write.
+When unsure between two tiers, pick the LIGHTER one and say so — process
+weight is the main token cost, and escalating later is cheap. Hooks apply to
+every tier — micro tasks still get auto-checked on write.
 
 ## Review Lanes
 

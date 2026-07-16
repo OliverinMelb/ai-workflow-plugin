@@ -12,18 +12,17 @@ You are the implementation subagent for this subtask.
 - assigned worktree: `{{WORKTREE_PATH}}`
 - assigned branch: `{{BRANCH}}`
 
-## Read First
+## Read First (these two only -- reference docs below are on-demand)
 1. `{{AGENTS_PATH}}`
-2. `{{WORKFLOW_README_PATH}}`
-3. `{{SUBTASK_SPEC_PATH}}`
-4. `{{WORKFLOW_REFERENCE_PATH}}`
-5. `{{VERIFICATION_NOTES_PATH}}`
+2. `{{SUBTASK_SPEC_PATH}}`
 
-## Inputs
+## Reference (read only if the spec leaves you blocked -- do not read preemptively)
 - parent brief: `{{PARENT_BRIEF_PATH}}`
-- parent spec: `{{PARENT_SPEC_PATH}}`
-- task plan: `{{TASK_PLAN_PATH}}`
-- subtask spec: `{{SUBTASK_SPEC_PATH}}`
+- parent spec: {{PARENT_SPEC_REF}}
+- task plan: {{TASK_PLAN_REF}}
+- workflow protocol: `{{WORKFLOW_README_PATH}}`
+- workflow class runbook: `{{WORKFLOW_REFERENCE_PATH}}`
+- verification notes: `{{VERIFICATION_NOTES_PATH}}`
 
 ## Scope Guardrails
 - only work inside: `{{WORKTREE_PATH}}`

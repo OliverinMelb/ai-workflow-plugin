@@ -5,7 +5,7 @@ description: 为 ai-workflow 任务的一个子任务分配 worktree 并启动�
 
 # task-assign：子任务 → worktree → 子代理
 
-一次只处理一个子任务（one subtask, one worktree 是硬约束，hook 会强制）。
+one subtask, one worktree 是硬约束（hook 强制）。默认串行处理；**可选并行**：若多个子任务的文件面互不相交（看 brief 的 Plan 段 boundary 列）且无依赖关系，可先逐个完成步骤 1-3，再在同一条消息里并行派发多个 implementer（worktree + hook 已保证隔离）。并行省时间但多花 token，按当下更缺哪个选。
 
 ## 步骤
 

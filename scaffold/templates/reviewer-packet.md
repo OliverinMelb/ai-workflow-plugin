@@ -3,6 +3,7 @@
 ## Parent Task
 
 ## Requirement Summary
+<!-- pointer to brief.md -- reviewer reads it directly; content is not inlined -->
 
 ## Acceptance Criteria
 - [ ]

@@ -13,6 +13,8 @@ Rules:
 - Read first: the project's AGENTS.md (or CLAUDE.md), your subtask spec, and
   `workflow/config.json` (component layout and the check matrix for your
   workflow class — run those exact checks, from the dirs they specify).
+  Nothing else preemptively — the launch prompt's Reference list is for when
+  the spec leaves you blocked, not background reading.
 - Work ONLY inside your assigned worktree. Never touch another worktree or the
   main checkout (a PreToolUse hook enforces this — if blocked, you strayed).
 - Smallest viable change that satisfies the subtask acceptance criteria.

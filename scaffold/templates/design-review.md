@@ -1,12 +1,16 @@
-# Design Review Gate
+# Design Review Gate (heavy form — rarely needed)
 
-Run this gate AFTER `plan.md` is written and BEFORE subtasks are created.
-Splitting a bad plan multiplies the rework across every worktree.
+DEFAULT GATE: the "Design Gate Checklist" section inside `brief.md`,
+self-checked by the orchestrator. No review subagents, no separate file.
 
-## How To Run
+Use THIS heavy form only when a contract change is complex enough that the
+orchestrator cannot confidently self-check (multi-surface contract rewrites,
+auth/IPC semantics). It is a deliberate token expense — justify it in the brief.
+
+## How To Run (heavy form)
 
 Launch 2-3 parallel review agents, each with ONE lens below, each receiving
-`brief.md`, `spec.md`, `plan.md`, and `workflow/context/invariants.md`.
+`brief.md` (and `spec.md` if it exists) plus `workflow/context/invariants.md`.
 Each reviewer answers: "what breaks if we build exactly this plan?"
 
 Iterate at most 2 rounds. If the gate still fails, escalate to human.

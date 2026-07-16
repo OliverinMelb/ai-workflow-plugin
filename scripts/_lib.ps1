@@ -20,7 +20,9 @@ function Get-WorkflowConfig {
   if (-not (Test-Path $configPath)) {
     throw "workflow/config.json not found in $RepoRoot. Run the workflow-init skill first."
   }
-  return Get-Content $configPath -Raw | ConvertFrom-Json
+  # -Encoding UTF8: config.json is UTF-8 without BOM; PS 5.1 otherwise falls
+  # back to ANSI on zh locales and mojibake breaks ConvertFrom-Json.
+  return Get-Content $configPath -Raw -Encoding UTF8 | ConvertFrom-Json
 }
 
 function Resolve-ProjectPython {

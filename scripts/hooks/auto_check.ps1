@@ -23,7 +23,7 @@ if (-not $repoRoot) { exit 0 }
 $repoRoot = $repoRoot -replace '/', '\'
 
 try {
-  $config = Get-Content (Join-Path $repoRoot 'workflow\config.json') -Raw | ConvertFrom-Json
+  $config = Get-Content (Join-Path $repoRoot 'workflow\config.json') -Raw -Encoding UTF8 | ConvertFrom-Json
 } catch {
   exit 0
 }

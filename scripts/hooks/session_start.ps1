@@ -15,7 +15,7 @@ $repoRoot = $repoRoot -replace '/', '\'
 
 $configPath = Join-Path $repoRoot 'workflow\config.json'
 if (-not (Test-Path $configPath)) { exit 0 }
-$config = Get-Content $configPath -Raw | ConvertFrom-Json
+$config = Get-Content $configPath -Raw -Encoding UTF8 | ConvertFrom-Json
 
 Write-Output "## $($config.project_name) project memory (auto-loaded)"
 foreach ($pointer in $config.memory.pointers) {

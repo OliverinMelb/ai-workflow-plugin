@@ -79,7 +79,14 @@ foreach ($group in $groupNames) {
 }
 $checksBlock = [string]::Join("`r`n", $checksLines)
 
-$content = Get-Content $templatePath -Raw
+# spec.md / plan.md are optional since brief became the single task doc:
+# emit a real pointer only when the file exists, never a dead path.
+$specRef = if (Test-Path $specPath) { "``$specPath``" } else { '(not created -- brief.md is authoritative)' }
+$planRef = if (Test-Path $planPath) { "``$planPath``" } else { '(not created -- see the Plan section in brief.md)' }
+
+# -Encoding UTF8: templates are UTF-8 without BOM; PS 5.1 defaults to ANSI
+# and mangles any non-ASCII character on zh locales.
+$content = Get-Content $templatePath -Raw -Encoding UTF8
 $replacements = @{
   '{{TASK_ID}}' = $TaskId
   '{{SUBTASK_ID}}' = $SubtaskId
@@ -93,6 +100,9 @@ $replacements = @{
   '{{WORKFLOW_REFERENCE_PATH}}' = $workflowReferencePath
   '{{VERIFICATION_NOTES_PATH}}' = $verificationNotesPath
   '{{PARENT_BRIEF_PATH}}' = $briefPath
+  '{{PARENT_SPEC_REF}}' = $specRef
+  '{{TASK_PLAN_REF}}' = $planRef
+  # legacy placeholders (older scaffolded project templates):
   '{{PARENT_SPEC_PATH}}' = $specPath
   '{{TASK_PLAN_PATH}}' = $planPath
   '{{SUBTASK_SUMMARY_PATH}}' = $summaryPath
@@ -110,7 +120,7 @@ if ($OutFile) {
   if ($outDir -and -not (Test-Path $outDir)) {
     New-Item -ItemType Directory -Path $outDir -Force | Out-Null
   }
-  Set-Content -Path $outPath -Value $content
+  Set-Content -Path $outPath -Value $content -Encoding UTF8
   Write-Output "prompt_file=$outPath"
 }
 else {

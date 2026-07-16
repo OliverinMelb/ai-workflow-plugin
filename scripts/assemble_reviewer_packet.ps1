@@ -32,12 +32,14 @@ if ($taskEntry) {
   $subtasks = @($taskEntry.subtasks)
 }
 
+# Pointer, not inlined content: the reviewer agent has Read and pulls the
+# brief itself. Inlining duplicated multi-KB of text into every packet.
 $requirementSummary = ''
 if (Test-Path $briefPath) {
-  $requirementSummary = (Get-Content $briefPath -Raw).Trim()
+  $requirementSummary = "Read the task brief (goal, acceptance criteria, stop conditions): ``$briefPath``"
 }
 elseif (Test-Path $specPath) {
-  $requirementSummary = (Get-Content $specPath -Raw).Trim()
+  $requirementSummary = "Read the task spec (no brief found): ``$specPath``"
 }
 
 $subtaskLines = New-Object System.Collections.Generic.List[string]
@@ -89,7 +91,7 @@ foreach ($report in $reportFiles) {
   $checkerLines.Add("- report: $($report.FullName)")
 }
 
-$template = Get-Content $reviewerTemplatePath -Raw
+$template = Get-Content $reviewerTemplatePath -Raw -Encoding UTF8
 $template = $template -replace '(?s)## Parent Task\s*.*?(?=## Requirement Summary)', "## Parent Task`r`n$TaskId`r`n`r`n"
 $template = $template -replace '(?s)## Requirement Summary\s*.*?(?=## Acceptance Criteria)', "## Requirement Summary`r`n$requirementSummary`r`n`r`n"
 $template = $template -replace '(?s)## Subtasks\s*.*?(?=## Changed Files By Subtask)', "## Subtasks`r`n$([string]::Join("`r`n", $subtaskLines))`r`n`r`n"
@@ -103,7 +105,7 @@ else {
   Join-Path $taskDir 'reviewer-packet.md'
 }
 
-Set-Content -Path $outPath -Value $template
+Set-Content -Path $outPath -Value $template -Encoding UTF8
 
 Write-Output "task_id=$TaskId"
 Write-Output "reviewer_packet=$outPath"
