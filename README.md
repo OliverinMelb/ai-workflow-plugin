@@ -96,10 +96,15 @@
 约定：检查里 `cmd: "python"` 由引擎解析为 项目 venv > `WORKFLOW_PYTHON`
 （用户级 settings env）> PATH，并验证可运行（Windows Store 别名会 exit 9009）。
 
+e2e 检查组约定：Playwright spec 作为普通检查进 config checks，挂到需要行为
+验收的 workflow class（模板见 config.example.json 的 e2e 组）。浏览器写
+`channel: 'chrome'` 用本地系统 Chrome 兜底——镜像环境下 `playwright install`
+常下不动 Chromium（quick-creative-V2 已验证）。需要应用在跑的 spec 用
+playwright config 的 webServer 起停，别依赖手动 dev 进程（并发假阴性）。
+
 ## 后续方向（v1.0 之后，按需）
 
 - 跨平台：引擎目前是 PowerShell 5.1 / Windows 专用；出现非 Windows 项目时
   评估移植成 python
 - bootstrap 组件类型扩展：目前只有 python-venv / node（npm）；pnpm/yarn/
   go/docker 组件出现时按需加
-- e2e 检查组范式：Playwright spec 进 config checks（P3 已验证可行）

@@ -87,6 +87,18 @@
                                                  ]
                                     }
                                 ],
+                   "e2e":  [
+                               {
+                                   "name":  "playwright",
+                                   "dir":  "ai_helper_frontend",
+                                   "cmd":  "npx",
+                                   "args":  [
+                                                "playwright",
+                                                "test"
+                                            ],
+                                   "$comment":  "e2e 检查组范式：Playwright spec 进 checks，按需挂到 workflow class（本示例组未挂类，仅作模板）。浏览器写 channel:'chrome' 走本地系统 Chrome 兜底——镜像环境下 playwright install 常下不动 Chromium（quick-creative-V2 已验证）。需要应用在跑的 spec 用 playwright config 的 webServer 起停，别依赖手动 dev 进程（并发假阴性）"
+                               }
+                           ],
                    "checkers":  [
                                     {
                                         "name":  "contract-touchpoints",

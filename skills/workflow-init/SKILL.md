@@ -21,6 +21,7 @@ description: 在一个新项目里初始化 ai-workflow 多代理工作流：脚
    - `project_name`、`memory.pointers`（本项目的 wiki/规则文档路径）
    - `components`：读项目目录结构确定组件（python-venv 组件填 probe_imports；node 组件填 probe_modules 和 install_env）
    - `checks` + `workflow_classes`：问用户或从 package.json/pyproject/CI 配置推断验证命令；**注意检查间的顺序依赖**（如 build-before-test）
+   - 项目有 Playwright（或适合行为验收）时建 `e2e` 检查组挂到相应 class（模板见 config.example.json 的 e2e 组）；spec 里浏览器用 `channel: 'chrome'` 走本地系统 Chrome 兜底——镜像环境下 `playwright install` 可能下不动 Chromium
    - `auto_check`：选一个最快的单文件检查（如 ruff）
    - `contract_touchpoints` / `env_consistency`：没有明确契约面时可先填空数组，后续补
 4. 创建 `workflow/context/lessons.md`（空骨架，说明"闭环时追加"）和 `workflow/README.md`（一句话指向 plugin README）。
