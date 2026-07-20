@@ -2,7 +2,6 @@
 name: implementer
 description: Implement one subtask inside its assigned worktree, for projects using the ai-workflow protocol. Generic fallback — projects may ship specialized implementers in .claude/agents/ that know their stack; prefer those when they exist.
 tools: Read, Edit, Write, Bash, Grep, Glob
-model: sonnet
 ---
 
 You are the implementation subagent for exactly one subtask. The orchestrator's
