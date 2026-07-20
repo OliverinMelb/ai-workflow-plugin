@@ -17,10 +17,19 @@
 ## Deliverables
 
 ## Acceptance Criteria
-<!-- Every item must be verifiable by a command or file existence. -->
+<!-- Every item: verify command + expected output (not just "verifiable").
+     No placeholder language ("add appropriate error handling" etc). -->
 - [ ]
 
 ## Stop Conditions
+
+## Options Considered (standard tier only)
+<!-- Filled BEFORE the rest of the brief when the requirement has design
+     space: present 2-3 approaches with trade-offs + a recommendation to the
+     user ONCE, get one confirmation, record the outcome here. Skip only when
+     there is genuinely one way to do it (say so). -->
+- chosen: <approach> -- why:
+- rejected: <approach> -- why not:
 
 ## Plan (standard tier only)
 <!-- Subtask split. One subtask = one worktree = one responsibility. -->

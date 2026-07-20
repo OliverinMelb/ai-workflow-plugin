@@ -29,7 +29,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scrip
 
 覆盖模板占位内容，必须包含：Goal、Context（已知事实，引用两层记忆避免重新踩坑）、Deliverables、**可验收的 Acceptance Criteria**（每条都要能被命令或文件存在性验证）、Stop Conditions。small 级删除 Plan 和 Design Gate Checklist 两段。
 
-standard 级在 brief 内继续填 **Plan 段**（子任务拆分表）并自查 **Design Gate Checklist 段**，全勾后才能拆子任务。不再单独建 spec.md / plan.md / design-review.md；仅当契约变更复杂到 brief 装不下时才另建 spec.md，且不派发独立评审子代理（checklist 自查即设计门）。
+standard 级填 brief 前先过**方案门**：需求存在设计空间时，一次性给出 2-3 个候选方案（各带取舍）和你的推荐，让用户**确认一次**（不要多轮追问、不要逐段确认），把选定方案和落选原因写进 brief 的 Options Considered 段；确实只有一种做法时写明"无设计空间"即可。然后在 brief 内继续填 **Plan 段**（子任务拆分表）并自查 **Design Gate Checklist 段**，全勾后才能拆子任务。不再单独建 spec.md / plan.md / design-review.md；仅当契约变更复杂到 brief 装不下时才另建 spec.md，且不派发独立评审子代理（checklist 自查即设计门）。
 
 ## 完成标准
 - [ ] 分级判断已明示给用户

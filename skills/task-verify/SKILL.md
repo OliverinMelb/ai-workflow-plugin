@@ -18,11 +18,15 @@ description: 对 ai-workflow 子任务做独立复验：在其 worktree 里重�
    powershell -NoProfile -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/verify_subtask.ps1" -TaskId <task-id> -SubtaskId <subtask-id>
    ```
    产出 `workflow/tasks/<task-id>/subtask-summaries/<subtask-id>.verify.md`，exit 0 = 全过。
+   证据自动绑定候选版本（base_sha / candidate_sha / dirty 指纹 / config hash）；
+   同时把 worktree 根的 `subtask-summary.md` 收集进任务包。**验证后又改了代码就
+   必须重跑**——组包时 candidate_sha 与 worktree HEAD 不一致会直接拒绝。
+   dirty=true 说明实现代理没提交完整（协议要求 commit），先让它补提交再验。
 
    **small 级（无 worktree、直接在分支上做的任务）**：没有 registry 条目，
-   改用直验形式，不要手工补登 registry：
+   改用直验形式（-BaseSha 用 brief 的 Worktree 段记录的 base_sha），不要手工补登 registry：
    ```powershell
-   ... verify_subtask.ps1 -TaskId <task-id> -SubtaskId main -WorktreePath <项目根> -Workflow <class>
+   ... verify_subtask.ps1 -TaskId <task-id> -SubtaskId main -WorktreePath <项目根> -Workflow <class> -BaseSha <brief 记录的 base_sha>
    ```
 
 2. FAIL 处理：读证据文件里的失败输出，把失败信息回给实现子代理修复（同一 worktree），修完重跑本步骤。**不要自己在主 checkout 里修**。

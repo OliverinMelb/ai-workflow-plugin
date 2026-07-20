@@ -16,7 +16,8 @@ REGISTRY = main_root() / "workflow" / "state" / "worktree-registry.json"
 def load_registry() -> dict:
     if not REGISTRY.exists():
         return {"tasks": []}
-    return json.loads(REGISTRY.read_text(encoding="utf-8"))
+    # utf-8-sig: tolerate a BOM (PowerShell 5.1 tooling writes them freely)
+    return json.loads(REGISTRY.read_text(encoding="utf-8-sig"))
 
 
 def save_registry(data: dict) -> None:
@@ -25,11 +26,12 @@ def save_registry(data: dict) -> None:
 
 
 def main() -> int:
-    if len(sys.argv) != 6:
-        print("usage: register_worktree.py <task_id> <subtask_id> <branch> <worktree_path> <workflow>")
+    if len(sys.argv) not in (6, 7):
+        print("usage: register_worktree.py <task_id> <subtask_id> <branch> <worktree_path> <workflow> [base_sha]")
         return 1
 
     task_id, subtask_id, branch, worktree_path, workflow = sys.argv[1:6]
+    base_sha = sys.argv[6] if len(sys.argv) == 7 else ""
     data = load_registry()
     tasks = data.setdefault("tasks", [])
 
@@ -44,7 +46,8 @@ def main() -> int:
         "subtask_id": subtask_id,
         "branch": branch,
         "worktree_path": worktree_path,
-        "workflow": workflow
+        "workflow": workflow,
+        "base_sha": base_sha
     }
 
     if existing is None:

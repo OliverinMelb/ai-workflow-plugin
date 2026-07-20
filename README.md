@@ -96,6 +96,13 @@
 约定：检查里 `cmd: "python"` 由引擎解析为 项目 venv > `WORKFLOW_PYTHON`
 （用户级 settings env）> PATH，并验证可运行（Windows Store 别名会 exit 9009）。
 
+Git 证据模型：任务/子任务创建时记录 `base_sha`（brief 与 registry），受审变更集
+= `base_sha...candidate_sha` 的已提交范围（实现代理必须 commit；未提交内容在
+packet 里单列为 WARNING，不算候选）。verify 证据绑定 candidate_sha / dirty 指纹
+/ config hash；组包时 candidate_sha 与 worktree HEAD 不一致直接拒绝
+（-AllowStale 可越过但会标注 STALE）。summary 由实现代理写在 worktree 根
+（不提交），verify 收集进任务包——实现代理不跨 worktree 边界写主 checkout。
+
 e2e 检查组约定：Playwright spec 作为普通检查进 config checks，挂到需要行为
 验收的 workflow class（模板见 config.example.json 的 e2e 组）。浏览器写
 `channel: 'chrome'` 用本地系统 Chrome 兜底——镜像环境下 `playwright install`

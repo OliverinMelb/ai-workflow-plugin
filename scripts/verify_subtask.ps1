@@ -16,7 +16,11 @@ param(
   # checkout) together with -Workflow to verify without a registry lookup.
   [string]$WorktreePath,
 
-  [string]$Workflow
+  [string]$Workflow,
+
+  # Direct-form runs have no registry entry; pass the base_sha recorded in the
+  # task brief so checkers can classify the committed range.
+  [string]$BaseSha
 )
 
 $ErrorActionPreference = 'Stop'
@@ -45,6 +49,19 @@ if ($WorktreePath) {
 
 $worktree = $entry.worktree_path -replace '/', '\'
 if (-not (Test-Path $worktree)) { throw "Worktree path does not exist: $worktree" }
+
+# Bind the evidence to the exact candidate version: SHA, dirty fingerprint and
+# config hash. A PASS is only valid for this precise state.
+$candidateSha = (git -C $worktree rev-parse HEAD).Trim()
+$resolvedBaseSha = if ($BaseSha) { $BaseSha }
+  elseif ($entry.PSObject.Properties['base_sha'] -and $entry.base_sha) { "$($entry.base_sha)" }
+  else { '' }
+$configSha = (Get-FileHash (Join-Path $repoRoot 'workflow\config.json') -Algorithm SHA256).Hash.Substring(0, 12).ToLowerInvariant()
+
+# Checkers (e.g. contract touchpoints) read these to classify the committed
+# range base_sha...candidate_sha, not just the working tree.
+$env:WORKFLOW_BASE_SHA = $resolvedBaseSha
+$env:WORKFLOW_CANDIDATE_SHA = $candidateSha
 
 $python = Resolve-ProjectPython $config $repoRoot
 
@@ -87,9 +104,34 @@ foreach ($check in $checks) {
   $results += [pscustomobject]@{ name = $check.name; status = $status; exit = $code; output = $output }
 }
 
+$env:WORKFLOW_BASE_SHA = $null
+$env:WORKFLOW_CANDIDATE_SHA = $null
+
+# Evidence is only sound if it still describes the tree we just checked.
+$headNow = (git -C $worktree rev-parse HEAD).Trim()
+if ($headNow -ne $candidateSha) {
+  throw "HEAD moved during verification ($candidateSha -> $headNow); evidence would be unsound. Re-run."
+}
+
+# Dirty fingerprint at evidence time. subtask-summary.md (the deliberately
+# uncommitted summary collected below) is excluded by design.
+$dirtyEntries = @(git -C $worktree status --porcelain | Where-Object { $_ -and ($_ -notmatch 'subtask-summary\.md$') })
+$dirty = $dirtyEntries.Count -gt 0
+
 $summaryDir = Join-Path $repoRoot "workflow\tasks\$TaskId\subtask-summaries"
 if (-not (Test-Path $summaryDir)) { New-Item -ItemType Directory -Force $summaryDir | Out-Null }
 $evidencePath = Join-Path $summaryDir "$SubtaskId.verify.md"
+
+# Engine-side collection: the implementer writes subtask-summary.md at its
+# worktree root (it never writes across the worktree boundary); verification
+# collects it into the task packet.
+$wtSummary = Join-Path $worktree 'subtask-summary.md'
+$collectedSummary = Join-Path $summaryDir "$SubtaskId.md"
+$summaryCollected = $false
+if (Test-Path $wtSummary) {
+  Copy-Item $wtSummary $collectedSummary -Force
+  $summaryCollected = $true
+}
 
 $stamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
 $lines = @()
@@ -98,6 +140,10 @@ $lines += ""
 $lines += "- task: $TaskId"
 $lines += "- workflow: $($entry.workflow)"
 $lines += "- worktree: $worktree"
+$lines += "- base_sha: $(if ($resolvedBaseSha) { $resolvedBaseSha } else { '(not recorded)' })"
+$lines += "- candidate_sha: $candidateSha"
+$lines += "- dirty: $(if ($dirty) { "true ($($dirtyEntries.Count) uncommitted entries -- candidate incomplete, evidence provisional)" } else { 'false' })"
+$lines += "- config_sha256: $configSha"
 $lines += "- run at: $stamp (re-run by orchestrator/reviewer, NOT subagent self-report)"
 $lines += "- overall: $(if ($allPassed) { 'PASS' } else { 'FAIL' })"
 $lines += ""
@@ -113,4 +159,7 @@ $lines -join "`r`n" | Out-File -FilePath $evidencePath -Encoding utf8
 Write-Output ""
 Write-Output "overall=$(if ($allPassed) { 'PASS' } else { 'FAIL' })"
 Write-Output "evidence=$evidencePath"
+Write-Output "candidate_sha=$candidateSha"
+Write-Output "dirty=$dirty"
+Write-Output "summary_collected=$(if ($summaryCollected) { $collectedSummary } else { 'NO (subtask-summary.md not found in worktree)' })"
 if (-not $allPassed) { exit 1 }

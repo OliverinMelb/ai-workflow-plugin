@@ -9,6 +9,11 @@
 
 ## Goal
 
+## Files To Modify
+<!-- Exact paths, one per line. Anything not listed here is out of scope for
+     this subtask -- needing an unlisted file means escalate, not improvise. -->
+- 
+
 ## Scope
 - files or surfaces this subtask may touch:
 
@@ -21,8 +26,12 @@
 - parent spec:
 
 ## Acceptance Criteria
-- [ ]
-- [ ]
+<!-- Every item: verify command + expected output, so the implementer never
+     invents its own definition of done. NO placeholder language anywhere in
+     this spec ("add appropriate error handling", "similar to subtask X",
+     "handle edge cases") -- spell out the concrete behavior instead. -->
+- [ ] <criterion> -- verify: `<command>` -> expect: <output>
+- [ ] 
 
 ## Verification
 - maker checks:

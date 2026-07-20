@@ -9,7 +9,7 @@ description: 关闭一个 ai-workflow 任务（闭环步骤，强制）：合并
 
 ## 清单（按序执行，缺一不可）
 
-1. **合并**：把子任务分支合回 task 分支/main（按用户约定）；合并后在主 checkout 重跑该任务涉及的检查矩阵确认无冲突破坏。
+1. **合并**：合并前核对每个子任务 `.verify.md` 的 candidate_sha 等于待合分支 HEAD（不一致 = 验证后又改过，先重跑 /task-verify）。然后把子任务分支合回 task 分支/main（按用户约定）；合并后在主 checkout 重跑该任务涉及的检查矩阵确认无冲突破坏。
 
 2. **summary.md 回写**：填 `workflow/tasks/<task-id>/summary.md`——交付了什么、验证证据（引用 .verify.md）、遗留 follow-ups。禁止留模板原文。
 

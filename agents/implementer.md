@@ -24,9 +24,14 @@ Rules:
   a check expects a component dir is a common, wasteful mistake), and with no
   dev server / watch process running (shared intermediate dirs cause false
   failures).
-- Write your subtask summary to the exact path the orchestrator gave you,
-  using workflow/templates/subtask-summary.md. Include: what changed, files
-  touched, check results, risks, and a reviewer recommendation.
+- Commit your work on the assigned branch before finishing. The reviewed
+  change set is `base_sha...HEAD` of your branch -- uncommitted work is
+  invisible to verification and review.
+- Write your subtask summary to `subtask-summary.md` at your worktree root
+  (the launch prompt gives the exact path), using
+  workflow/templates/subtask-summary.md. Do NOT commit this file -- the engine
+  collects it into the task packet after verification. Include: what changed,
+  files touched, check results, risks, and a reviewer recommendation.
 - Your checks are self-report; the orchestrator independently re-runs them.
   Misreporting wastes a full round trip — report failures honestly.
 - Hit a stop rule (workflow/checks/stop-rules.md)? Stop and escalate in your

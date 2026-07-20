@@ -44,6 +44,10 @@ Copy-Item (Join-Path $templatesRoot 'task-summary.md') (Join-Path $taskDir 'summ
 $branchName = "$BranchPrefix/$slug"
 $worktreePath = Join-Path (Split-Path $repoRoot -Parent) "wt-$slug"
 
+# base_sha anchors every later diff/checker/review to base_sha...candidate_sha
+# instead of guessing a baseline branch name.
+$baseSha = (git -C $repoRoot rev-parse HEAD).Trim()
+
 if (-not $NoWorktree) {
   git -C $repoRoot worktree add $worktreePath -b $branchName | Out-Null
 }
@@ -61,7 +65,7 @@ $summaryPath = Join-Path $taskDir 'summary.md'
 Add-Content $briefPath "`n## Task`n$Title`n"
 Add-Content $briefPath "`n## Workflow`n$Workflow`n"
 Add-Content $briefPath "`n## Workflow Reference`n$workflowFile`n"
-Add-Content $briefPath "`n## Worktree`n- branch: $branchName`n- path: $worktreePath`n"
+Add-Content $briefPath "`n## Worktree`n- branch: $branchName`n- path: $worktreePath`n- base_sha: $baseSha`n"
 Add-Content $backlogPath "`n## Task`n$Title`n"
 Add-Content $summaryPath "`n## Task`n$Title`n"
 
@@ -84,6 +88,7 @@ foreach ($subtask in $Subtasks) {
 Write-Output "task_id=$taskId"
 Write-Output "task_dir=$taskDir"
 Write-Output "branch=$branchName"
+Write-Output "base_sha=$baseSha"
 if (-not $NoWorktree) {
   Write-Output "worktree=$worktreePath"
 }

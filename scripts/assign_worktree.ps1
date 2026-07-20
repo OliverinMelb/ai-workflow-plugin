@@ -32,7 +32,20 @@ if (-not $NoCreate) {
   git -C $repoRoot worktree add $worktreePath -b $branchName | Out-Null
 }
 
-& $python (Join-Path $PSScriptRoot 'register_worktree.py') $TaskId $SubtaskId $branchName $worktreePath $Workflow
+# base_sha = the commit this subtask branched from; every later diff, checker
+# and review compares base_sha...candidate_sha instead of guessing a baseline.
+$baseSha = ''
+if (Test-Path $worktreePath) {
+  if ($NoCreate) {
+    $mainHead = (git -C $repoRoot rev-parse HEAD).Trim()
+    $baseSha = ("$(git -C $worktreePath merge-base HEAD $mainHead 2>$null)").Trim()
+  }
+  if (-not $baseSha) {
+    $baseSha = (git -C $worktreePath rev-parse HEAD).Trim()
+  }
+}
+
+& $python (Join-Path $PSScriptRoot 'register_worktree.py') $TaskId $SubtaskId $branchName $worktreePath $Workflow $baseSha
 
 # Provision the worktree so it can run all checks with zero installs
 # (node component junctions to the main checkout; python components use the
@@ -46,3 +59,4 @@ Write-Output "subtask_id=$SubtaskId"
 Write-Output "branch=$branchName"
 Write-Output "worktree=$worktreePath"
 Write-Output "workflow=$Workflow"
+Write-Output "base_sha=$baseSha"

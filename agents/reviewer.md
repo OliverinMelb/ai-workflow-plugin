@@ -14,8 +14,12 @@ Inputs (from the orchestrator): the task's reviewer-packet.md, the task packet
 Rules:
 - Evidence hierarchy: independent re-verification evidence > diffs you inspect
   yourself > subagent self-reports. Never accept a self-report alone.
-- Inspect actual diffs in each subtask worktree
-  (`git -C <worktree> diff main...HEAD`), not just summaries.
+- Inspect the actual committed diff of each subtask
+  (`git -C <worktree> diff <base_sha>...<candidate_sha>` -- both SHAs are in
+  the packet), not just summaries. Never diff against a hardcoded branch name.
+  Uncommitted changes flagged in the packet are findings, not review targets.
+- The packet labels each subtask's verify evidence as SHA-bound, stale, or
+  missing. Stale or missing evidence is an automatic finding: require re-run.
 - Every finding must cite `file:line`. "Looks fine" is not a finding.
 - Check acceptance criteria one by one; unverifiable criteria are findings.
 - Check contract surfaces as defined in `workflow/config.json`

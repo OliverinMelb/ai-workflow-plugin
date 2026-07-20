@@ -2,7 +2,11 @@ param(
   [Parameter(Mandatory = $true)]
   [string]$TaskId,
 
-  [string]$OutFile
+  [string]$OutFile,
+
+  # Escape hatch for the staleness gate below; the packet still labels the
+  # evidence as stale. Only for human-approved exceptions.
+  [switch]$AllowStale
 )
 
 $ErrorActionPreference = 'Stop'
@@ -48,21 +52,71 @@ $checkerLines = New-Object System.Collections.Generic.List[string]
 
 foreach ($subtask in $subtasks) {
   $summaryPath = Join-Path $summaryDir ($subtask.subtask_id + '.md')
+  $verifyPath = Join-Path $summaryDir ($subtask.subtask_id + '.verify.md')
+
+  $baseSha = ''
+  if ($subtask.PSObject.Properties['base_sha'] -and $subtask.base_sha) { $baseSha = "$($subtask.base_sha)" }
+
+  $headSha = ''
+  if (Test-Path $subtask.worktree_path) {
+    $headSha = ("$(git -C $subtask.worktree_path rev-parse HEAD 2>$null)").Trim()
+  }
+
+  # Staleness gate: verify evidence must be bound to the exact commit under
+  # review. A mismatch means code changed after verification -- the PASS no
+  # longer describes this candidate.
+  $verifiedSha = ''
+  if (Test-Path $verifyPath) {
+    $shaLine = (Get-Content $verifyPath | Where-Object { $_ -match '^- candidate_sha: ' } | Select-Object -First 1)
+    if ($shaLine -and $shaLine -match '^- candidate_sha: ([0-9a-f]+)') { $verifiedSha = $Matches[1] }
+  }
+  if ($headSha -and $verifiedSha -and ($verifiedSha -ne $headSha) -and -not $AllowStale) {
+    throw "Stale verification evidence for $($subtask.subtask_id): verified $verifiedSha but worktree HEAD is $headSha. Re-run verify_subtask.ps1 first (or pass -AllowStale to override, packet will label it stale)."
+  }
+
+  $evidenceLabel = if (-not (Test-Path $verifyPath)) { 'MISSING -- run verify_subtask.ps1' }
+    elseif (-not $verifiedSha) { "$verifyPath (NOT SHA-bound -- re-run verify)" }
+    elseif ($headSha -and ($verifiedSha -ne $headSha)) { "$verifyPath (STALE: bound to $verifiedSha, HEAD is $headSha)" }
+    else { "$verifyPath (bound to $verifiedSha)" }
 
   $subtaskLines.Add("- name: $($subtask.subtask_id)")
   $subtaskLines.Add("- worktree: $($subtask.worktree_path)")
   $subtaskLines.Add("- branch: $($subtask.branch)")
+  $subtaskLines.Add("- base_sha: $(if ($baseSha) { $baseSha } else { '(not recorded)' })")
+  $subtaskLines.Add("- candidate_sha: $(if ($headSha) { $headSha } else { '(worktree missing)' })")
+  $subtaskLines.Add("- verify evidence: $evidenceLabel")
   $subtaskLines.Add("- summary: $summaryPath")
 
   if (Test-Path $subtask.worktree_path) {
-    $changedFiles = git -C $subtask.worktree_path diff --name-only
-    if ($LASTEXITCODE -eq 0 -and $changedFiles) {
-      foreach ($file in $changedFiles) {
-        $changedFileLines.Add("- $($subtask.subtask_id): $file")
+    # Canonical change set = committed range base_sha...HEAD. Staged/unstaged
+    # leftovers are reported separately: they are NOT part of the candidate.
+    if ($baseSha) {
+      $committed = git -C $subtask.worktree_path diff --name-only "$baseSha...HEAD"
+      if ($LASTEXITCODE -eq 0 -and $committed) {
+        foreach ($file in $committed) {
+          $changedFileLines.Add("- $($subtask.subtask_id): $file")
+        }
+      }
+      else {
+        $changedFileLines.Add("- $($subtask.subtask_id): no committed changes in $baseSha...HEAD")
       }
     }
     else {
-      $changedFileLines.Add("- $($subtask.subtask_id): no unstaged diff detected from worktree HEAD")
+      $changedFileLines.Add("- $($subtask.subtask_id): base_sha not recorded (pre-upgrade entry); falling back to working-tree diff vs HEAD")
+      $fallback = git -C $subtask.worktree_path diff --name-only HEAD
+      if ($LASTEXITCODE -eq 0 -and $fallback) {
+        foreach ($file in $fallback) {
+          $changedFileLines.Add("- $($subtask.subtask_id): $file (working tree)")
+        }
+      }
+    }
+    $staged = @(git -C $subtask.worktree_path diff --cached --name-only | Where-Object { $_ })
+    foreach ($file in $staged) {
+      $changedFileLines.Add("- $($subtask.subtask_id): WARNING uncommitted (staged): $file")
+    }
+    $unstaged = @(git -C $subtask.worktree_path diff --name-only | Where-Object { $_ -and $_ -notmatch 'subtask-summary\.md$' })
+    foreach ($file in $unstaged) {
+      $changedFileLines.Add("- $($subtask.subtask_id): WARNING uncommitted (unstaged): $file")
     }
   }
   else {

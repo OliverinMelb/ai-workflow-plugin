@@ -25,7 +25,7 @@ $briefPath = Join-Path $taskDir 'brief.md'
 $specPath = Join-Path $taskDir 'spec.md'
 $planPath = Join-Path $taskDir 'plan.md'
 $summaryDir = Join-Path $taskDir 'subtask-summaries'
-$summaryPath = Join-Path $summaryDir "$SubtaskId.md"
+$collectedSummaryPath = Join-Path $summaryDir "$SubtaskId.md"
 
 if (-not (Test-Path $taskDir)) {
   throw "Task not found: $TaskId"
@@ -55,6 +55,11 @@ if (-not $subtaskEntry) {
 }
 
 $workflow = $subtaskEntry.workflow
+
+# The implementer writes its summary INSIDE its worktree (it never writes
+# across the worktree boundary); verify_subtask.ps1 collects it into
+# subtask-summaries/ afterwards.
+$summaryPath = Join-Path ($subtaskEntry.worktree_path -replace '/', '\') 'subtask-summary.md'
 
 # Optional per-class runbook; fall back to the workflow README.
 $workflowReferencePath = Join-Path $repoRoot "workflow\workflows\$workflow.md"
@@ -133,3 +138,4 @@ Write-Output "workflow=$workflow"
 Write-Output "worktree=$($subtaskEntry.worktree_path)"
 Write-Output "branch=$($subtaskEntry.branch)"
 Write-Output "summary_path=$summaryPath"
+Write-Output "collected_summary_path=$collectedSummaryPath (populated by verify_subtask.ps1)"

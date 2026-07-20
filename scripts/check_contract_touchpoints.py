@@ -8,6 +8,7 @@ working directory (worktree-aware).
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 
@@ -16,10 +17,15 @@ from _lib import load_config, project_root
 ROOT = project_root()
 RULES = load_config(ROOT)["contract_touchpoints"]
 
+# Set by verify_subtask.ps1: the committed range being verified. Without them
+# only the working tree vs HEAD is visible and committed branch work is missed.
+BASE_SHA = os.environ.get("WORKFLOW_BASE_SHA", "")
+CANDIDATE_SHA = os.environ.get("WORKFLOW_CANDIDATE_SHA", "HEAD")
 
-def changed_files() -> list[str]:
+
+def _git_diff_names(*args: str) -> list[str]:
     proc = subprocess.run(
-        ["git", "diff", "--name-only", "HEAD"],
+        ["git", "diff", "--name-only", *args],
         cwd=ROOT,
         capture_output=True,
         text=True,
@@ -28,6 +34,13 @@ def changed_files() -> list[str]:
     if proc.returncode != 0:
         return []
     return [line.strip().replace("\\", "/") for line in proc.stdout.splitlines() if line.strip()]
+
+
+def changed_files() -> list[str]:
+    files = set(_git_diff_names("HEAD"))  # staged + unstaged working tree
+    if BASE_SHA:
+        files.update(_git_diff_names(f"{BASE_SHA}...{CANDIDATE_SHA}"))  # committed range
+    return sorted(files)
 
 
 def classify_diff(files: list[str]) -> tuple[bool, list[str]]:
@@ -42,7 +55,8 @@ def main() -> int:
     has_contract_diff, contract_touched = classify_diff(files)
 
     if not files:
-        print("OK: no working tree diff detected; contract touchpoints remain structurally intact")
+        scope = f"range {BASE_SHA}...{CANDIDATE_SHA} + working tree" if BASE_SHA else "working tree only (no WORKFLOW_BASE_SHA set)"
+        print(f"OK: no diff detected ({scope}); contract touchpoints remain structurally intact")
         return 0
 
     if not has_contract_diff:

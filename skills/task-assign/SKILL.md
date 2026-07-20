@@ -13,7 +13,7 @@ one subtask, one worktree 是硬约束（hook 强制）。默认串行处理；*
    ```powershell
    powershell -NoProfile -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/new_subtask.ps1" -TaskId <task-id> -Title "<短英文标题>" -Workflow <class>
    ```
-   然后把 spec 填实：目标、边界（允许/禁止触碰的文件）、验收标准。
+   然后把 spec 填实：目标、**Files To Modify（精确路径清单）**、边界（允许/禁止触碰的文件）、验收标准（每条带验证命令+预期输出，禁占位语）。
 
 2. 分配 worktree（自动注册 + bootstrap，完成后 worktree 零安装可跑全部检查）：
    ```powershell
@@ -27,7 +27,9 @@ one subtask, one worktree 是硬约束（hook 强制）。默认串行处理；*
 
 4. 用 Agent 工具派发：优先用项目 `.claude/agents/` 里的特化 implementer（如 implementer-backend），没有则用 plugin 的通用 `implementer`。提示词全文使用渲染产物。
 
-5. 子代理返回后：**不信自查报告**，直接进入 /task-verify。
+5. 子代理返回后：**不信自查报告**，直接进入 /task-verify。它的 summary 写在
+   worktree 根的 `subtask-summary.md`（不提交），由 verify 收集进任务包——实现
+   代理不跨 worktree 边界回写主 checkout。
 
 ## 完成标准
 - [ ] worktree 已注册进 workflow/state/worktree-registry.json

@@ -14,6 +14,9 @@
 - name:
 - worktree:
 - branch:
+- base_sha:
+- candidate_sha:
+- verify evidence:
 - summary:
 - depends-on:
 
