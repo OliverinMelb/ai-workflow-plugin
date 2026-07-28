@@ -1,0 +1,25 @@
+{
+  "name": "ai-workflow-codex",
+  "version": "1.0.0",
+  "description": "Bounded Codex coding workflow with deterministic verification",
+  "author": {
+    "name": "admin"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "AI Workflow for Codex",
+    "shortDescription": "Plan, verify, review, and close coding tasks safely.",
+    "longDescription": "A Codex-native workflow that preserves task evidence and project checks while using bounded subagents, native worktrees, finite review loops, and deterministic environment diagnostics.",
+    "developerName": "admin",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Run this task with $codex-workflow.",
+      "Use $codex-workflow to diagnose this repository.",
+      "Use $codex-workflow to verify and close this task."
+    ]
+  }
+}

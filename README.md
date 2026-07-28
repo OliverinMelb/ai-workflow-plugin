@@ -1,5 +1,8 @@
 # ai-workflow plugin
 
+> **`codex-win` 分支**：Codex/Windows v1 已加入本分支。Codex 用户先阅读
+> [README-CODEX.md](README-CODEX.md)；原有 Claude Code v1 文件保留用于兼容和历史对照。
+
 可复用的多 worktree 代理工作流引擎（Claude Code plugin）。
 
 > **状态：early（v1.0）**。在 2 个真实项目（FastAPI+Electron、Nuxt）上完成
