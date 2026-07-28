@@ -1,6 +1,6 @@
 {
   "name": "ai-workflow-codex",
-  "version": "1.0.0",
+  "version": "1.0.0+codex.20260728120039",
   "description": "Bounded Codex coding workflow with deterministic verification",
   "author": {
     "name": "admin"

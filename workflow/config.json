@@ -1,0 +1,55 @@
+{
+  "$comment": "AI Workflow for Codex 自身的项目配置，用于 dogfood init、CLI、技能文档和插件结构。",
+  "project_name": "ai-workflow-codex",
+  "memory": {
+    "pointers": [
+      "Codex 使用说明: README-CODEX.md",
+      "工作流协议: skills/codex-workflow/references/protocol.md",
+      "配置规范: skills/codex-workflow/references/config.md"
+    ]
+  },
+  "codex_workflow": {
+    "version": 1,
+    "default_tier": "small",
+    "default_class": "plugin-change",
+    "max_fix_loops": 2,
+    "max_subagents": 1,
+    "check_timeout_seconds": 120
+  },
+  "checks": {
+    "plugin": [
+      {
+        "name": "workflow-cli-tests",
+        "dir": "",
+        "cmd": "python",
+        "args": [
+          "-m",
+          "unittest",
+          "discover",
+          "-s",
+          "tests",
+          "-v"
+        ],
+        "timeout_seconds": 120
+      }
+    ]
+  },
+  "workflow_classes": {
+    "plugin-change": [
+      "plugin"
+    ]
+  },
+  "auto_check": null,
+  "contract_touchpoints": {
+    "surface_markers": [
+      "skills/codex-workflow/scripts/workflow_cli.py",
+      "skills/codex-workflow/scripts/workflow.ps1",
+      "skills/codex-workflow/SKILL.md",
+      ".codex-plugin/plugin.json"
+    ],
+    "structural_checks": []
+  },
+  "env_consistency": {
+    "rules": []
+  }
+}

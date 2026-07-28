@@ -121,5 +121,126 @@ class WorkflowCliTest(unittest.TestCase):
         self.assertEqual(task["state"], "FIX")
 
 
+class WorkflowInitTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory()
+        self.repo = Path(self.temp.name)
+        self.run_cmd("git", "init", "-q")
+
+    def tearDown(self) -> None:
+        self.temp.cleanup()
+
+    def run_cmd(self, *args: str, expected: int = 0) -> subprocess.CompletedProcess[str]:
+        result = subprocess.run(
+            list(args),
+            cwd=self.repo,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        self.assertEqual(result.returncode, expected, result.stdout)
+        return result
+
+    def workflow(self, *args: str, expected: int = 0) -> subprocess.CompletedProcess[str]:
+        return self.run_cmd(sys.executable, "-X", "utf8", str(CLI), *args, expected=expected)
+
+    def dry_run_fixture(self, name: str, files: dict[str, str]) -> dict:
+        fixture = self.repo / name
+        fixture.mkdir()
+        subprocess.run(["git", "init", "-q"], cwd=fixture, check=True)
+        for relative, content in files.items():
+            path = fixture / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8")
+        result = subprocess.run(
+            [sys.executable, "-X", "utf8", str(CLI), "init", "--dry-run"],
+            cwd=fixture,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout)
+        return json.loads(result.stdout)
+
+    def test_init_detects_python_and_runs_doctor(self) -> None:
+        (self.repo / "pyproject.toml").write_text(
+            "[project]\nname='fixture'\n"
+            "[project.optional-dependencies]\ndev=['pytest>=8']\n",
+            encoding="utf-8",
+        )
+        tests = self.repo / "tests"
+        tests.mkdir()
+        (tests / "test_smoke.py").write_text(
+            "def test_smoke():\n    assert True\n",
+            encoding="utf-8",
+        )
+        result = self.workflow("init", "--project-name", "fixture")
+        self.assertIn("detected=python", result.stdout)
+        self.assertIn('"valid": true', result.stdout)
+        config = json.loads(
+            (self.repo / "workflow" / "config.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(config["project_name"], "fixture")
+        self.assertEqual(config["workflow_classes"]["app-change"], ["python"])
+        self.assertEqual(config["checks"]["python"][0]["args"], ["-m", "pytest"])
+        self.assertNotIn("global_memory_dir", config["codex_workflow"])
+
+    def test_init_refuses_to_overwrite_existing_config(self) -> None:
+        workflow = self.repo / "workflow"
+        workflow.mkdir()
+        config_path = workflow / "config.json"
+        original = '{"project_name":"keep-me"}\n'
+        config_path.write_text(original, encoding="utf-8")
+        result = self.workflow("init", expected=2)
+        self.assertIn("refusing to overwrite", result.stdout)
+        self.assertEqual(config_path.read_text(encoding="utf-8"), original)
+
+    def test_init_dry_run_detects_node_without_writing(self) -> None:
+        (self.repo / "package.json").write_text(
+            json.dumps(
+                {
+                    "name": "web-fixture",
+                    "scripts": {
+                        "lint": "eslint .",
+                        "test": "vitest run",
+                        "build": "vite build",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        result = self.workflow("init", "--dry-run")
+        config = json.loads(result.stdout)
+        self.assertEqual(config["workflow_classes"]["app-change"], ["node"])
+        self.assertEqual(
+            [item["name"] for item in config["checks"]["node"]],
+            ["lint", "test", "build"],
+        )
+        self.assertFalse((self.repo / "workflow").exists())
+
+    def test_init_detects_maven_gradle_and_generic_repositories(self) -> None:
+        maven = self.dry_run_fixture(
+            "maven",
+            {"pom.xml": "<project/>", "mvnw.cmd": "@echo off\n"},
+        )
+        self.assertEqual(maven["workflow_classes"]["app-change"], ["maven"])
+        self.assertEqual(maven["checks"]["maven"][0]["cmd"], "cmd")
+
+        gradle = self.dry_run_fixture(
+            "gradle",
+            {"build.gradle.kts": "plugins {}", "gradlew.bat": "@echo off\n"},
+        )
+        self.assertEqual(gradle["workflow_classes"]["app-change"], ["gradle"])
+        self.assertEqual(gradle["checks"]["gradle"][0]["cmd"], "cmd")
+
+        generic = self.dry_run_fixture("generic", {})
+        self.assertEqual(generic["workflow_classes"]["app-change"], ["repository"])
+        self.assertEqual(generic["checks"]["repository"][0]["args"], ["diff", "--check"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -66,7 +66,22 @@ def run(
 
 
 def git(repo: Path, *args: str, check: bool = True) -> str:
-    return run(["git", *args], repo, check=check).stdout.rstrip("\r\n")
+    result = subprocess.run(
+        ["git", *args],
+        cwd=str(repo),
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        shell=False,
+    )
+    if check and result.returncode:
+        diagnostics = "\n".join(
+            value.rstrip("\r\n") for value in (result.stdout, result.stderr) if value
+        )
+        raise WorkflowError(f"Command failed ({result.returncode}): git {' '.join(args)}\n{diagnostics}")
+    return result.stdout.rstrip("\r\n")
 
 
 def repo_root(start: Path | None = None) -> Path:
@@ -85,6 +100,270 @@ def load_config(repo: Path) -> tuple[Path, dict[str, Any]]:
         return path, json.loads(path.read_text(encoding="utf-8-sig"))
     except (UnicodeError, json.JSONDecodeError) as exc:
         raise WorkflowError(f"Invalid UTF-8 JSON in {path}: {exc}") from exc
+
+
+def read_project_text(path: Path, limit: int = 1_000_000) -> str:
+    """Read non-secret project metadata without following arbitrarily large files."""
+    try:
+        if not path.is_file() or path.stat().st_size > limit:
+            return ""
+        return path.read_text(encoding="utf-8-sig", errors="replace")
+    except OSError:
+        return ""
+
+
+def project_documents(repo: Path) -> list[str]:
+    candidates = (
+        "AGENTS.md",
+        "README.md",
+        "README-CODEX.md",
+        "ARCHITECTURE.md",
+        "DESIGN.md",
+        "CONTRIBUTING.md",
+        "pyproject.toml",
+        "package.json",
+        "pom.xml",
+    )
+    labels = {
+        "AGENTS.md": "Agent rules",
+        "README.md": "Project guide",
+        "README-CODEX.md": "Codex guide",
+        "ARCHITECTURE.md": "Architecture",
+        "DESIGN.md": "Design",
+        "CONTRIBUTING.md": "Contributing",
+        "pyproject.toml": "Python project",
+        "package.json": "Node project",
+        "pom.xml": "Maven project",
+    }
+    return [f"{labels[name]}: {name}" for name in candidates if (repo / name).is_file()]
+
+
+def python_markers(repo: Path) -> str:
+    paths = [
+        repo / "pyproject.toml",
+        repo / "setup.cfg",
+        repo / "tox.ini",
+        repo / "requirements.txt",
+        repo / "requirements-dev.txt",
+    ]
+    tests = repo / "tests"
+    if tests.is_dir():
+        paths.extend(sorted(tests.rglob("test*.py"))[:40])
+    return "\n".join(read_project_text(path) for path in paths).lower()
+
+
+def detect_python(repo: Path) -> tuple[dict[str, Any], list[dict[str, Any]]] | None:
+    has_python = any(
+        (
+            (repo / "pyproject.toml").is_file(),
+            (repo / "setup.py").is_file(),
+            (repo / "setup.cfg").is_file(),
+            (repo / "requirements.txt").is_file(),
+            (repo / "tests").is_dir() and any((repo / "tests").glob("test*.py")),
+        )
+    )
+    if not has_python:
+        return None
+    venv = next(
+        (
+            name
+            for name in (".venv", "venv", "env")
+            if (repo / name / ("Scripts/python.exe" if os.name == "nt" else "bin/python")).is_file()
+        ),
+        None,
+    )
+    markers = python_markers(repo)
+    uses_pytest = "pytest" in markers
+    component: dict[str, Any] = {"dir": "", "type": "python-venv"}
+    component["probe_imports"] = ["pytest"] if uses_pytest else []
+    if (repo / "tests").is_dir():
+        args = ["-m", "pytest"] if uses_pytest else ["-m", "unittest", "discover", "-s", "tests", "-v"]
+        check_name = "pytest" if uses_pytest else "unittest"
+    else:
+        source = "src" if (repo / "src").is_dir() else "."
+        args = ["-m", "compileall", "-q", source]
+        check_name = "compileall"
+    checks = [
+        {
+            "name": check_name,
+            "dir": "",
+            "cmd": "python",
+            "args": args,
+            "timeout_seconds": 900,
+        }
+    ]
+    if venv:
+        component["venv"] = venv
+    return component, checks
+
+
+def detect_node(repo: Path) -> tuple[dict[str, Any], list[dict[str, Any]]] | None:
+    package_path = repo / "package.json"
+    if not package_path.is_file():
+        return None
+    try:
+        package = json.loads(read_project_text(package_path))
+    except json.JSONDecodeError:
+        package = {}
+    scripts = package.get("scripts") if isinstance(package, dict) else {}
+    scripts = scripts if isinstance(scripts, dict) else {}
+    if (repo / "pnpm-lock.yaml").is_file():
+        manager = "pnpm"
+    elif (repo / "yarn.lock").is_file():
+        manager = "yarn"
+    else:
+        manager = "npm"
+    checks: list[dict[str, Any]] = []
+    for name in ("lint", "test", "build"):
+        value = scripts.get(name)
+        if not isinstance(value, str) or not value.strip():
+            continue
+        if name == "test" and "no test specified" in value.lower():
+            continue
+        checks.append(
+            {
+                "name": name,
+                "dir": "",
+                "cmd": manager,
+                "args": [name] if manager != "npm" else ["run", name],
+                "timeout_seconds": 900,
+            }
+        )
+    if not checks:
+        checks.append(
+            {
+                "name": "package-metadata",
+                "dir": "",
+                "cmd": "node",
+                "args": ["-e", "JSON.parse(require('fs').readFileSync('package.json','utf8'))"],
+                "timeout_seconds": 60,
+            }
+        )
+    component = {
+        "dir": "",
+        "type": "node",
+        "package_manager": manager,
+        "probe_modules": [],
+    }
+    return component, checks
+
+
+def detect_maven(repo: Path) -> tuple[dict[str, Any], list[dict[str, Any]]] | None:
+    if not (repo / "pom.xml").is_file():
+        return None
+    if os.name == "nt" and (repo / "mvnw.cmd").is_file():
+        cmd, args = "cmd", ["/c", "mvnw.cmd", "-q", "test"]
+    elif (repo / "mvnw").is_file():
+        cmd, args = str(repo / "mvnw"), ["-q", "test"]
+    else:
+        cmd, args = "mvn", ["-q", "test"]
+    return (
+        {"dir": "", "type": "maven"},
+        [{"name": "maven-test", "dir": "", "cmd": cmd, "args": args, "timeout_seconds": 1200}],
+    )
+
+
+def detect_gradle(repo: Path) -> tuple[dict[str, Any], list[dict[str, Any]]] | None:
+    if not any((repo / name).is_file() for name in ("build.gradle", "build.gradle.kts")):
+        return None
+    if os.name == "nt" and (repo / "gradlew.bat").is_file():
+        cmd, args = "cmd", ["/c", "gradlew.bat", "test"]
+    elif (repo / "gradlew").is_file():
+        cmd, args = str(repo / "gradlew"), ["test"]
+    else:
+        cmd, args = "gradle", ["test"]
+    return (
+        {"dir": "", "type": "gradle"},
+        [{"name": "gradle-test", "dir": "", "cmd": cmd, "args": args, "timeout_seconds": 1200}],
+    )
+
+
+def generated_config(repo: Path, project_name: str | None = None) -> tuple[dict[str, Any], list[str]]:
+    components: dict[str, Any] = {}
+    checks: dict[str, list[dict[str, Any]]] = {}
+    detected: list[str] = []
+    for name, detector in (
+        ("python", detect_python),
+        ("node", detect_node),
+        ("maven", detect_maven),
+        ("gradle", detect_gradle),
+    ):
+        result = detector(repo)
+        if result is None:
+            continue
+        component, group_checks = result
+        components[name] = component
+        checks[name] = group_checks
+        detected.append(name)
+    if not detected:
+        components["repository"] = {"dir": "", "type": "generic"}
+        checks["repository"] = [
+            {
+                "name": "git-diff-check",
+                "dir": "",
+                "cmd": "git",
+                "args": ["diff", "--check"],
+                "timeout_seconds": 60,
+            }
+        ]
+        detected.append("repository")
+    python_config: dict[str, Any] = {}
+    python_component = components.get("python", {})
+    if python_component.get("venv"):
+        python_config["venv"] = python_component.pop("venv")
+    contract_markers = [
+        path
+        for path in ("api/", "apis/", "schema/", "schemas/", "openapi/", "src/models.py")
+        if (repo / path.rstrip("/")).exists()
+    ]
+    config: dict[str, Any] = {
+        "$comment": (
+            "Generated by codex-workflow init from repository metadata. "
+            "Review project-specific checks before the first production change."
+        ),
+        "project_name": project_name or repo.name,
+        "memory": {"pointers": project_documents(repo)},
+        "codex_workflow": {
+            "version": 1,
+            "default_tier": "small",
+            "default_class": "app-change",
+            "max_fix_loops": 2,
+            "max_subagents": 1,
+            "check_timeout_seconds": 900,
+        },
+        "components": components,
+        "checks": checks,
+        "workflow_classes": {"app-change": detected},
+        "auto_check": None,
+        "contract_touchpoints": {
+            "$comment": "Conservative path markers only; add structural checks when contracts are known.",
+            "surface_markers": contract_markers,
+            "structural_checks": [],
+        },
+        "env_consistency": {
+            "$comment": "Never store secret values here. Add only required variable-name markers.",
+            "rules": [],
+        },
+    }
+    if python_config:
+        config["python"] = python_config
+    return config, detected
+
+
+def cmd_init(args: argparse.Namespace) -> int:
+    repo = repo_root()
+    path = repo / "workflow" / "config.json"
+    if path.exists():
+        raise WorkflowError(f"Workflow configuration already exists; refusing to overwrite: {path}")
+    config, detected = generated_config(repo, args.project_name)
+    if args.dry_run:
+        print(json.dumps(config, ensure_ascii=False, indent=2))
+        return 0
+    atomic_json(path, config)
+    print(f"created={path}")
+    print(f"detected={','.join(detected)}")
+    print("doctor:")
+    return cmd_doctor(argparse.Namespace())
 
 
 def sha256_bytes(value: bytes) -> str:
@@ -146,7 +425,7 @@ def workspace_info(repo: Path, ignore_prefixes: list[str] | None = None) -> dict
         "kind": "linked-worktree" if git_dir != common_dir else "main-checkout",
         "branch": branch,
         "detached": branch is None,
-        "head_sha": git(repo, "rev-parse", "HEAD"),
+        "head_sha": git(repo, "rev-parse", "--verify", "HEAD", check=False) or "<unborn>",
         "dirty_fingerprint": dirty_fingerprint(entries),
         "dirty_entries": entries,
     }
@@ -196,12 +475,16 @@ def path_owned(path: str, owned_paths: list[str]) -> bool:
 
 def changed_files(repo: Path, task: dict[str, Any]) -> tuple[list[str], list[str]]:
     base_sha = task["workspace"]["base_sha"]
-    commands = [
-        ["diff", "--name-only", f"{base_sha}...HEAD"],
-        ["diff", "--cached", "--name-only"],
-        ["diff", "--name-only"],
-        ["ls-files", "--others", "--exclude-standard"],
-    ]
+    commands = []
+    if base_sha != "<unborn>":
+        commands.append(["diff", "--name-only", f"{base_sha}...HEAD"])
+    commands.extend(
+        [
+            ["diff", "--cached", "--name-only"],
+            ["diff", "--name-only"],
+            ["ls-files", "--others", "--exclude-standard"],
+        ]
+    )
     candidates: set[str] = set()
     for args in commands:
         output = git(repo, *args, check=False)
@@ -654,6 +937,15 @@ def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(prog="codex-workflow")
     root.add_argument("--version", action="version", version=ENGINE_VERSION)
     commands = root.add_subparsers(dest="command", required=True)
+
+    init = commands.add_parser("init")
+    init.add_argument("--project-name")
+    init.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print the detected configuration without writing workflow/config.json.",
+    )
+    init.set_defaults(func=cmd_init)
 
     doctor = commands.add_parser("doctor")
     doctor.set_defaults(func=cmd_doctor)

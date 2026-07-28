@@ -42,6 +42,28 @@ marketplace。安装后的 skill 名称是 `$codex-workflow`。
 使用 $codex-workflow 完成这个任务
 ```
 
+## 新项目自动初始化
+
+在新 Git 项目根目录运行：
+
+```powershell
+workflow.ps1 init
+```
+
+也可以直接告诉 Codex：
+
+```text
+为当前仓库初始化 $codex-workflow，不修改业务代码。
+```
+
+`init` 会识别 Python、Node、Maven、Gradle 或通用仓库，生成保守的
+`workflow/config.json`，随后自动执行 `doctor`。它不会读取 `.env` 的值，也不会覆盖
+已有配置。先预览而不写入：
+
+```powershell
+workflow.ps1 init --dry-run
+```
+
 ## 项目配置
 
 现有 v1 配置可继续使用。建议增加：
@@ -73,6 +95,8 @@ $python = "path\to\python.exe"
 
 生命周期测试覆盖：
 
+- 新项目自动识别并初始化配置
+- 已有配置拒绝覆盖
 - 微任务跳过任务包
 - 既有脏文件隔离
 - 越界文件导致验证失败并进入 `FIX`

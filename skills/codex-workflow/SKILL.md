@@ -15,6 +15,17 @@ Resolve `scripts/workflow.ps1` relative to this skill directory and run it from 
 powershell -NoProfile -ExecutionPolicy Bypass -File <skill-dir>\scripts\workflow.ps1 <command> <args>
 ```
 
+For a new Git repository without `workflow/config.json`, initialize it first:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File <skill-dir>\scripts\workflow.ps1 init
+```
+
+`init` detects conservative Python, Node, Maven, or Gradle checks from repository metadata, writes
+only `workflow/config.json`, refuses to overwrite an existing configuration, and then runs
+`doctor`. It never reads `.env` values. Use `init --dry-run` to inspect the generated JSON without
+writing.
+
 Start every non-micro workflow with `doctor`.
 
 ## Route the task
@@ -28,33 +39,39 @@ Never create a nested worktree when Codex already placed the chat in one. Use an
 
 ## Run the state machine
 
-1. Diagnose:
+1. Initialize once when configuration is missing:
+
+   ```powershell
+   workflow.ps1 init
+   ```
+
+2. Diagnose:
 
    ```powershell
    workflow.ps1 doctor
    ```
 
-2. Start:
+3. Start:
 
    ```powershell
    workflow.ps1 start --title "<task>" --tier medium --workflow-class <class> --owned-path <path>
    ```
 
-3. Complete the plan, record acceptance criteria in the generated `brief.md`, then:
+4. Complete the plan, record acceptance criteria in the generated `brief.md`, then:
 
    ```powershell
    workflow.ps1 transition <task-id> --to EXECUTE
    ```
 
-4. Implement within owned paths. Do not require a commit before verification.
+5. Implement within owned paths. Do not require a commit before verification.
 
-5. Independently verify from the main thread:
+6. Independently verify from the main thread:
 
    ```powershell
    workflow.ps1 verify <task-id>
    ```
 
-6. Review only after verification passes. For a pass:
+7. Review only after verification passes. For a pass:
 
    ```powershell
    workflow.ps1 review <task-id> --verdict pass
@@ -68,7 +85,7 @@ Never create a nested worktree when Codex already placed the chat in one. Use an
 
    Return fixes to the same implementer context when practical. The script enforces the configured fix-loop limit.
 
-7. After integration, run verification again if the workspace changed, pass review, then close:
+8. After integration, run verification again if the workspace changed, pass review, then close:
 
    ```powershell
    workflow.ps1 close <task-id>

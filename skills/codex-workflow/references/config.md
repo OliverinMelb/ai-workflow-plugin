@@ -2,6 +2,24 @@
 
 The Codex engine remains compatible with existing `components`, `checks`, `workflow_classes`, `python`, `contract_touchpoints`, and `env_consistency` fields.
 
+## Automatic initialization
+
+From a new Git repository, run:
+
+```powershell
+workflow.ps1 init
+```
+
+The command inspects repository metadata such as `pyproject.toml`, `package.json`, `pom.xml`,
+Gradle build files, test directories, and wrapper scripts. It does not inspect `.env` values.
+It creates a conservative starting configuration and immediately runs `doctor`.
+
+- Use `init --dry-run` to print the proposed JSON without writing.
+- Use `init --project-name "<name>"` to override the repository-folder project name.
+- Existing `workflow/config.json` files are never overwritten.
+- Generated contract and environment sections are intentionally minimal; extend them only with
+  verified project facts.
+
 Add this optional block for Codex routing:
 
 ```json
