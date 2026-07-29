@@ -18,7 +18,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-ENGINE_VERSION = "1.0.0"
+ENGINE_VERSION = "1.1.0"
 ACTIVE_STATES = {"PLAN", "EXECUTE", "VERIFY", "REVIEW", "FIX", "INTEGRATE", "BLOCKED"}
 ALLOWED = {
     "PLAN": {"EXECUTE", "BLOCKED"},
@@ -468,6 +468,153 @@ def normalized_strings(values: list[str] | None) -> list[str]:
     return sorted({value.strip() for value in (values or []) if value.strip()})
 
 
+def planning_state() -> dict[str, Any]:
+    return {
+        "status": "discovering",
+        "unresolved_decisions": [],
+        "decisions": [],
+        "acceptance_criteria": [],
+        "spec_ref": None,
+        "multi_session": False,
+        "tickets": [],
+    }
+
+
+def repository_ref(repo: Path, value: str) -> tuple[str, Path]:
+    candidate = Path(value)
+    if candidate.is_absolute():
+        raise WorkflowError("Planning artifact references must be repository-relative")
+    resolved = (repo / candidate).resolve()
+    try:
+        relative = resolved.relative_to(repo.resolve()).as_posix()
+    except ValueError as exc:
+        raise WorkflowError("Planning artifact reference escapes the repository") from exc
+    if not resolved.is_file():
+        raise WorkflowError(f"Planning artifact does not exist: {relative}")
+    return relative, resolved
+
+
+def ticket_cycles(tickets: list[dict[str, Any]]) -> bool:
+    graph = {ticket["id"]: ticket.get("blocked_by", []) for ticket in tickets}
+    active: set[str] = set()
+    complete: set[str] = set()
+
+    def visit(ticket_id: str) -> bool:
+        if ticket_id in active:
+            return True
+        if ticket_id in complete:
+            return False
+        active.add(ticket_id)
+        if any(dependency in graph and visit(dependency) for dependency in graph.get(ticket_id, [])):
+            return True
+        active.remove(ticket_id)
+        complete.add(ticket_id)
+        return False
+
+    return any(visit(ticket_id) for ticket_id in graph)
+
+
+def validate_plan(repo: Path, task: dict[str, Any]) -> None:
+    planning = task.get("planning")
+    if planning is None:
+        if int(task.get("schema_version", 1)) <= 1:
+            return
+        raise WorkflowError("PLAN -> EXECUTE blocked: schema v2 task is missing planning state")
+    failures: list[str] = []
+    if planning.get("status") != "ready":
+        failures.append("planning status is not ready")
+    if planning.get("unresolved_decisions"):
+        failures.append("unresolved decisions remain")
+    if not planning.get("acceptance_criteria"):
+        failures.append("acceptance criteria are empty")
+    if task.get("tier") in {"medium", "contract"} and not planning.get("spec_ref"):
+        failures.append(f"{task.get('tier')} tasks require a local spec")
+    spec_ref = planning.get("spec_ref")
+    if spec_ref:
+        repository_ref(repo, spec_ref)
+    tickets = planning.get("tickets", [])
+    if planning.get("multi_session"):
+        if not spec_ref:
+            failures.append("multi-session tasks require a local spec")
+        if not tickets:
+            failures.append("multi-session tasks require tracer-bullet tickets")
+    ticket_ids = {ticket["id"] for ticket in tickets}
+    for ticket in tickets:
+        unknown = sorted(set(ticket.get("blocked_by", [])) - ticket_ids)
+        if unknown:
+            failures.append(f"ticket {ticket['id']} has unknown dependencies: {', '.join(unknown)}")
+        if ticket["id"] in ticket.get("blocked_by", []):
+            failures.append(f"ticket {ticket['id']} blocks itself")
+        if not ticket.get("acceptance_criteria"):
+            failures.append(f"ticket {ticket['id']} has no acceptance criteria")
+    if ticket_cycles(tickets):
+        failures.append("ticket dependency graph contains a cycle")
+    if failures:
+        raise WorkflowError("PLAN -> EXECUTE blocked: " + "; ".join(failures))
+
+
+def planning_fingerprint(repo: Path, task: dict[str, Any]) -> str:
+    planning = task.get("planning")
+    if planning is None:
+        if int(task.get("schema_version", 1)) <= 1:
+            return sha256_bytes(b"legacy-schema-v1")
+        raise WorkflowError("Schema v2 task is missing planning state")
+    payload = {
+        "planning": planning,
+        "spec_sha256": None,
+    }
+    if planning.get("spec_ref"):
+        _, spec_path = repository_ref(repo, planning["spec_ref"])
+        payload["spec_sha256"] = sha256_bytes(spec_path.read_bytes())
+    return sha256_bytes(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    )
+
+
+def write_planning_artifact(repo: Path, task: dict[str, Any]) -> None:
+    planning = task["planning"]
+    lines = [
+        "# Planning Record",
+        "",
+        f"- status: `{planning['status']}`",
+        f"- multi_session: `{str(planning['multi_session']).lower()}`",
+        f"- spec_ref: `{planning['spec_ref'] or 'none'}`",
+        "",
+        "## Unresolved decisions",
+        "",
+        *([f"- {value}" for value in planning["unresolved_decisions"]] or ["- None"]),
+        "",
+        "## Decisions",
+        "",
+        *([f"- {value}" for value in planning["decisions"]] or ["- None"]),
+        "",
+        "## Acceptance criteria",
+        "",
+        *([f"- [ ] {value}" for value in planning["acceptance_criteria"]] or ["- [ ] Not defined"]),
+        "",
+        "## Tracer-bullet tickets",
+        "",
+    ]
+    if planning["tickets"]:
+        for ticket in planning["tickets"]:
+            blocked_by = ", ".join(ticket["blocked_by"]) or "none"
+            lines.extend(
+                [
+                    f"### {ticket['id']}: {ticket['title']}",
+                    "",
+                    f"- blocked_by: {blocked_by}",
+                    *[f"- [ ] {value}" for value in ticket["acceptance_criteria"]],
+                    "",
+                ]
+            )
+    else:
+        lines.append("- None")
+    (task_dir(repo, task["task_id"]) / "planning.md").write_text(
+        "\n".join(lines).rstrip() + "\n",
+        encoding="utf-8",
+    )
+
+
 def cognitive_routing(args: argparse.Namespace) -> dict[str, list[str]]:
     return {
         "skills": normalized_strings(getattr(args, "skill", None)),
@@ -633,7 +780,7 @@ def cmd_start(args: argparse.Namespace) -> int:
     max_agents = min(tier_agent_limit, configured_agent_limit)
     routing = cognitive_routing(args)
     task = {
-        "schema_version": 1,
+        "schema_version": 2,
         "engine_version": ENGINE_VERSION,
         "task_id": task_id,
         "title": args.title,
@@ -645,6 +792,7 @@ def cmd_start(args: argparse.Namespace) -> int:
         "workspace": {**workspace, "base_sha": workspace["head_sha"]},
         "scope": {"owned_paths": sorted(set(args.owned_path or []))},
         "cognitive_routing": routing,
+        "planning": planning_state(),
         "budget": {
             "max_subagents": max_agents,
             "max_fix_loops": max_loops,
@@ -673,6 +821,7 @@ def cmd_start(args: argparse.Namespace) -> int:
         "## Plan\n\n- [ ] Define bounded implementation slices.\n",
         encoding="utf-8",
     )
+    write_planning_artifact(repo, task)
     print(f"task_id={task_id}\nstate=PLAN\npath={task_dir(repo, task_id)}")
     return 0
 
@@ -687,6 +836,8 @@ def transition(task: dict[str, Any], target: str) -> None:
 def cmd_transition(args: argparse.Namespace) -> int:
     repo = repo_root()
     task = load_task(repo, args.task_id)
+    if args.to == "EXECUTE":
+        validate_plan(repo, task)
     transition(task, args.to)
     save_task(repo, task, "TRANSITION", {"to": args.to, "note": args.note})
     print(f"task_id={args.task_id}\nstate={task['state']}")
@@ -714,6 +865,93 @@ def cmd_route(args: argparse.Namespace) -> int:
         f"task_id={task['task_id']}\n"
         f"state={task['state']}\n"
         f"skills={','.join(current['skills']) or 'direct'}"
+    )
+    return 0
+
+
+def cmd_plan(args: argparse.Namespace) -> int:
+    repo = repo_root()
+    task = load_task(repo, args.task_id)
+    if task["state"] not in {"PLAN", "BLOCKED"}:
+        raise WorkflowError(f"Planning updates are only allowed in PLAN or BLOCKED, found {task['state']}")
+    planning = task.setdefault("planning", planning_state())
+    before = json.loads(json.dumps(planning))
+    opened = normalized_strings(args.open_decision)
+    resolved = normalized_strings(args.resolve_decision)
+    decisions = normalized_strings(args.decision)
+    acceptance = normalized_strings(args.acceptance)
+    if resolved and len(decisions) < len(resolved):
+        raise WorkflowError("Each --resolve-decision requires a corresponding --decision")
+    if args.status:
+        planning["status"] = args.status
+    planning["unresolved_decisions"] = normalized_strings(
+        [*planning.get("unresolved_decisions", []), *opened]
+    )
+    for value in resolved:
+        if value not in planning["unresolved_decisions"]:
+            raise WorkflowError(f"Unresolved decision not found: {value}")
+        planning["unresolved_decisions"].remove(value)
+    planning["decisions"] = normalized_strings([*planning.get("decisions", []), *decisions])
+    planning["acceptance_criteria"] = normalized_strings(
+        [*planning.get("acceptance_criteria", []), *acceptance]
+    )
+    if args.spec_ref:
+        planning["spec_ref"], _ = repository_ref(repo, args.spec_ref)
+    if args.multi_session:
+        planning["multi_session"] = True
+    if planning == before:
+        raise WorkflowError("Provide at least one planning update")
+    save_task(
+        repo,
+        task,
+        "PLAN_UPDATED",
+        {
+            "status": args.status,
+            "opened": opened,
+            "resolved": resolved,
+            "decisions": decisions,
+            "acceptance": acceptance,
+            "spec_ref": planning["spec_ref"],
+            "multi_session": planning["multi_session"],
+        },
+    )
+    write_planning_artifact(repo, task)
+    print(
+        f"task_id={task['task_id']}\nstatus={planning['status']}\n"
+        f"unresolved={len(planning['unresolved_decisions'])}\n"
+        f"acceptance={len(planning['acceptance_criteria'])}"
+    )
+    return 0
+
+
+def cmd_ticket(args: argparse.Namespace) -> int:
+    repo = repo_root()
+    task = load_task(repo, args.task_id)
+    if task["state"] not in {"PLAN", "BLOCKED"}:
+        raise WorkflowError(f"Ticket updates are only allowed in PLAN or BLOCKED, found {task['state']}")
+    planning = task.setdefault("planning", planning_state())
+    tickets = planning.setdefault("tickets", [])
+    ticket = next((item for item in tickets if item["id"] == args.ticket_id), None)
+    if ticket is None:
+        ticket = {
+            "id": args.ticket_id,
+            "title": args.title,
+            "blocked_by": [],
+            "acceptance_criteria": [],
+        }
+        tickets.append(ticket)
+    elif ticket["title"] != args.title:
+        raise WorkflowError(f"Ticket {args.ticket_id} already exists with a different title")
+    ticket["blocked_by"] = normalized_strings([*ticket["blocked_by"], *args.blocked_by])
+    ticket["acceptance_criteria"] = normalized_strings(
+        [*ticket["acceptance_criteria"], *args.acceptance]
+    )
+    tickets.sort(key=lambda item: item["id"])
+    save_task(repo, task, "TICKET_UPSERTED", ticket)
+    write_planning_artifact(repo, task)
+    print(
+        f"task_id={task['task_id']}\nticket={ticket['id']}\n"
+        f"blocked_by={','.join(ticket['blocked_by']) or 'none'}"
     )
     return 0
 
@@ -826,6 +1064,7 @@ def write_evidence(repo: Path, task: dict[str, Any], evidence: dict[str, Any]) -
         f"- head_sha: `{evidence['head_sha']}`",
         f"- dirty_fingerprint: `{evidence['dirty_fingerprint']}`",
         f"- config_sha256: `{evidence['config_sha256']}`",
+        f"- planning_sha256: `{evidence['planning_sha256']}`",
         f"- changed_files: {len(evidence['changed_files'])}",
         f"- scope_violations: {len(evidence['scope_violations'])}",
         "",
@@ -870,7 +1109,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
     passed = not scope_violations and all(item["status"] == "PASS" for item in checks)
     verification_id = dt.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     evidence = {
-        "schema_version": 1,
+        "schema_version": 2,
         "engine_version": ENGINE_VERSION,
         "verification_id": verification_id,
         "task_id": task["task_id"],
@@ -879,6 +1118,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
         "head_sha": workspace["head_sha"],
         "dirty_fingerprint": workspace["dirty_fingerprint"],
         "config_sha256": sha256_bytes(config_path.read_bytes()),
+        "planning_sha256": planning_fingerprint(repo, task),
         "changed_files": changed,
         "unchanged_preexisting_dirty": unchanged_baseline,
         "scope_violations": scope_violations,
@@ -891,6 +1131,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
         "head_sha": evidence["head_sha"],
         "dirty_fingerprint": evidence["dirty_fingerprint"],
         "config_sha256": evidence["config_sha256"],
+        "planning_sha256": evidence["planning_sha256"],
         "evidence": str(evidence_path.relative_to(repo)).replace("\\", "/"),
     }
     task["state"] = "REVIEW" if passed else "FIX"
@@ -911,6 +1152,12 @@ def evidence_fresh(repo: Path, task: dict[str, Any], config_path: Path) -> tuple
         return False, "Working tree changed after verification"
     if latest.get("config_sha256") != sha256_bytes(config_path.read_bytes()):
         return False, "Workflow config changed after verification"
+    try:
+        current_planning = planning_fingerprint(repo, task)
+    except WorkflowError as exc:
+        return False, str(exc)
+    if latest.get("planning_sha256") != current_planning:
+        return False, "Planning state or local spec changed after verification"
     return True, "fresh"
 
 
@@ -1013,6 +1260,25 @@ def parser() -> argparse.ArgumentParser:
     route.add_argument("--source-ref", action="append", default=[])
     route.add_argument("--routing-note", action="append", default=[])
     route.set_defaults(func=cmd_route)
+
+    plan = commands.add_parser("plan")
+    plan.add_argument("task_id")
+    plan.add_argument("--status", choices=["discovering", "ready"])
+    plan.add_argument("--open-decision", action="append", default=[])
+    plan.add_argument("--resolve-decision", action="append", default=[])
+    plan.add_argument("--decision", action="append", default=[])
+    plan.add_argument("--acceptance", action="append", default=[])
+    plan.add_argument("--spec-ref")
+    plan.add_argument("--multi-session", action="store_true")
+    plan.set_defaults(func=cmd_plan)
+
+    ticket = commands.add_parser("ticket")
+    ticket.add_argument("task_id")
+    ticket.add_argument("--ticket-id", required=True)
+    ticket.add_argument("--title", required=True)
+    ticket.add_argument("--blocked-by", action="append", default=[])
+    ticket.add_argument("--acceptance", action="append", default=[])
+    ticket.set_defaults(func=cmd_ticket)
 
     state = commands.add_parser("transition")
     state.add_argument("task_id")

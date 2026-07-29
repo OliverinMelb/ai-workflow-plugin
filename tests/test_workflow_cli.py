@@ -65,6 +65,16 @@ class WorkflowCliTest(unittest.TestCase):
     def workflow(self, *args: str, expected: int = 0) -> subprocess.CompletedProcess[str]:
         return self.run_cmd(sys.executable, "-X", "utf8", str(CLI), *args, expected=expected)
 
+    def ready_plan(self, task_id: str) -> None:
+        self.workflow(
+            "plan",
+            task_id,
+            "--acceptance",
+            "Requested behavior is verified.",
+            "--status",
+            "ready",
+        )
+
     def test_micro_skips_task_packet(self) -> None:
         result = self.workflow("start", "--title", "typo", "--tier", "micro")
         self.assertIn("packet=skipped", result.stdout)
@@ -175,6 +185,7 @@ class WorkflowCliTest(unittest.TestCase):
         )
         empty = self.workflow("route", "task-route-guards", expected=2)
         self.assertIn("Provide at least one", empty.stdout)
+        self.ready_plan("task-route-guards")
         self.workflow("transition", "task-route-guards", "--to", "EXECUTE")
         late = self.workflow(
             "route",
@@ -199,6 +210,7 @@ class WorkflowCliTest(unittest.TestCase):
             "task-1",
         )
         self.assertIn("state=PLAN", result.stdout)
+        self.ready_plan("task-1")
         self.workflow("transition", "task-1", "--to", "EXECUTE")
         (self.repo / "app.txt").write_text("changed\n", encoding="utf-8")
         verified = self.workflow("verify", "task-1")
@@ -227,6 +239,7 @@ class WorkflowCliTest(unittest.TestCase):
             "--task-id",
             "task-2",
         )
+        self.ready_plan("task-2")
         self.workflow("transition", "task-2", "--to", "EXECUTE")
         (self.repo / "outside.txt").write_text("outside\n", encoding="utf-8")
         result = self.workflow("verify", "task-2", expected=1)
@@ -235,6 +248,293 @@ class WorkflowCliTest(unittest.TestCase):
             (self.repo / "workflow" / "tasks" / "task-2" / "task.json").read_text(encoding="utf-8")
         )
         self.assertEqual(task["state"], "FIX")
+
+    def test_plan_gate_requires_resolution_acceptance_and_medium_spec(self) -> None:
+        self.workflow(
+            "start",
+            "--title",
+            "planned change",
+            "--tier",
+            "medium",
+            "--task-id",
+            "task-plan-gate",
+        )
+        blocked = self.workflow(
+            "transition",
+            "task-plan-gate",
+            "--to",
+            "EXECUTE",
+            expected=2,
+        )
+        self.assertIn("planning status is not ready", blocked.stdout)
+        self.assertIn("acceptance criteria are empty", blocked.stdout)
+        self.assertIn("require a local spec", blocked.stdout)
+
+        self.workflow(
+            "plan",
+            "task-plan-gate",
+            "--open-decision",
+            "Which compatibility policy applies?",
+            "--acceptance",
+            "Compatibility behavior is covered.",
+        )
+        still_blocked = self.workflow(
+            "plan",
+            "task-plan-gate",
+            "--status",
+            "ready",
+        )
+        self.assertIn("unresolved=1", still_blocked.stdout)
+        blocked = self.workflow(
+            "transition",
+            "task-plan-gate",
+            "--to",
+            "EXECUTE",
+            expected=2,
+        )
+        self.assertIn("unresolved decisions remain", blocked.stdout)
+
+        spec = self.repo / "workflow" / "tasks" / "task-plan-gate" / "spec.md"
+        spec.write_text("# Spec\n", encoding="utf-8")
+        self.workflow(
+            "plan",
+            "task-plan-gate",
+            "--resolve-decision",
+            "Which compatibility policy applies?",
+            "--decision",
+            "Preserve the existing policy.",
+            "--spec-ref",
+            "workflow/tasks/task-plan-gate/spec.md",
+        )
+        self.workflow("transition", "task-plan-gate", "--to", "EXECUTE")
+
+    def test_multi_session_plan_records_tracer_tickets_and_edges(self) -> None:
+        self.workflow(
+            "start",
+            "--title",
+            "multi session",
+            "--tier",
+            "contract",
+            "--task-id",
+            "task-tickets",
+        )
+        spec = self.repo / "workflow" / "tasks" / "task-tickets" / "spec.md"
+        spec.write_text("# Contract spec\n", encoding="utf-8")
+        self.workflow(
+            "ticket",
+            "task-tickets",
+            "--ticket-id",
+            "T1",
+            "--title",
+            "Vertical tracer",
+            "--acceptance",
+            "One end-to-end path passes.",
+        )
+        self.workflow(
+            "ticket",
+            "task-tickets",
+            "--ticket-id",
+            "T2",
+            "--title",
+            "Complete remaining behavior",
+            "--blocked-by",
+            "T1",
+            "--acceptance",
+            "Remaining cases pass.",
+        )
+        self.workflow(
+            "plan",
+            "task-tickets",
+            "--multi-session",
+            "--spec-ref",
+            "workflow/tasks/task-tickets/spec.md",
+            "--acceptance",
+            "Contract is verified end to end.",
+            "--status",
+            "ready",
+        )
+        self.workflow("transition", "task-tickets", "--to", "EXECUTE")
+        task_path = self.repo / "workflow" / "tasks" / "task-tickets" / "task.json"
+        task = json.loads(task_path.read_text(encoding="utf-8"))
+        self.assertEqual(task["planning"]["tickets"][1]["blocked_by"], ["T1"])
+        planning = task_path.with_name("planning.md").read_text(encoding="utf-8")
+        self.assertIn("### T1: Vertical tracer", planning)
+        self.assertIn("- blocked_by: T1", planning)
+
+    def test_legacy_task_without_planning_keeps_transition_compatibility(self) -> None:
+        self.workflow(
+            "start",
+            "--title",
+            "legacy",
+            "--tier",
+            "small",
+            "--task-id",
+            "task-legacy",
+        )
+        task_path = self.repo / "workflow" / "tasks" / "task-legacy" / "task.json"
+        task = json.loads(task_path.read_text(encoding="utf-8"))
+        task["schema_version"] = 1
+        task.pop("planning")
+        task_path.write_text(json.dumps(task), encoding="utf-8")
+        self.workflow("transition", "task-legacy", "--to", "EXECUTE")
+
+    def test_schema_v2_cannot_bypass_gate_by_deleting_planning(self) -> None:
+        self.workflow(
+            "start",
+            "--title",
+            "tampered packet",
+            "--tier",
+            "small",
+            "--task-id",
+            "task-tampered",
+        )
+        task_path = self.repo / "workflow" / "tasks" / "task-tampered" / "task.json"
+        task = json.loads(task_path.read_text(encoding="utf-8"))
+        task.pop("planning")
+        task_path.write_text(json.dumps(task), encoding="utf-8")
+        result = self.workflow(
+            "transition",
+            "task-tampered",
+            "--to",
+            "EXECUTE",
+            expected=2,
+        )
+        self.assertIn("schema v2 task is missing planning state", result.stdout)
+
+    def test_blocked_state_cannot_bypass_planning_gate(self) -> None:
+        self.workflow(
+            "start",
+            "--title",
+            "blocked bypass",
+            "--tier",
+            "small",
+            "--task-id",
+            "task-blocked-gate",
+        )
+        self.workflow("transition", "task-blocked-gate", "--to", "BLOCKED")
+        result = self.workflow(
+            "transition",
+            "task-blocked-gate",
+            "--to",
+            "EXECUTE",
+            expected=2,
+        )
+        self.assertIn("PLAN -> EXECUTE blocked", result.stdout)
+
+    def test_ticket_dependency_cycle_is_rejected(self) -> None:
+        self.workflow(
+            "start",
+            "--title",
+            "cyclic tickets",
+            "--tier",
+            "small",
+            "--task-id",
+            "task-cycle",
+        )
+        self.workflow(
+            "ticket",
+            "task-cycle",
+            "--ticket-id",
+            "T1",
+            "--title",
+            "First",
+            "--blocked-by",
+            "T2",
+            "--acceptance",
+            "First passes.",
+        )
+        self.workflow(
+            "ticket",
+            "task-cycle",
+            "--ticket-id",
+            "T2",
+            "--title",
+            "Second",
+            "--blocked-by",
+            "T1",
+            "--acceptance",
+            "Second passes.",
+        )
+        self.workflow(
+            "plan",
+            "task-cycle",
+            "--acceptance",
+            "Workflow completes.",
+            "--status",
+            "ready",
+        )
+        result = self.workflow(
+            "transition",
+            "task-cycle",
+            "--to",
+            "EXECUTE",
+            expected=2,
+        )
+        self.assertIn("dependency graph contains a cycle", result.stdout)
+
+    def test_resolving_decision_requires_recorded_resolution(self) -> None:
+        self.workflow(
+            "start",
+            "--title",
+            "decision audit",
+            "--tier",
+            "small",
+            "--task-id",
+            "task-decision",
+        )
+        self.workflow(
+            "plan",
+            "task-decision",
+            "--open-decision",
+            "Which mode?",
+        )
+        result = self.workflow(
+            "plan",
+            "task-decision",
+            "--resolve-decision",
+            "Which mode?",
+            "--decision",
+            " ",
+            expected=2,
+        )
+        self.assertIn("requires a corresponding --decision", result.stdout)
+
+    def test_spec_change_invalidates_verification_evidence(self) -> None:
+        self.workflow(
+            "start",
+            "--title",
+            "spec freshness",
+            "--tier",
+            "medium",
+            "--owned-path",
+            "app.txt",
+            "--task-id",
+            "task-spec-freshness",
+        )
+        spec = self.repo / "workflow" / "tasks" / "task-spec-freshness" / "spec.md"
+        spec.write_text("# Spec v1\n", encoding="utf-8")
+        self.workflow(
+            "plan",
+            "task-spec-freshness",
+            "--spec-ref",
+            "workflow/tasks/task-spec-freshness/spec.md",
+            "--acceptance",
+            "Behavior passes.",
+            "--status",
+            "ready",
+        )
+        self.workflow("transition", "task-spec-freshness", "--to", "EXECUTE")
+        (self.repo / "app.txt").write_text("changed\n", encoding="utf-8")
+        self.workflow("verify", "task-spec-freshness")
+        spec.write_text("# Spec v2\n", encoding="utf-8")
+        result = self.workflow(
+            "review",
+            "task-spec-freshness",
+            "--verdict",
+            "pass",
+            expected=2,
+        )
+        self.assertIn("local spec changed after verification", result.stdout)
 
 
 class WorkflowInitTest(unittest.TestCase):

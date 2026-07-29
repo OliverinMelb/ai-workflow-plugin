@@ -1,30 +1,43 @@
 ---
 name: codex-workflow
-description: Route, plan, implement, verify, review, resume, or close bounded repository work with cognitive-skill selection, native-worktree awareness, controlled subagent delegation, deterministic checks, finite fix loops, and auditable task evidence. Use for non-trivial coding work, hard bugs, design questions that may need research or a prototype, or whenever a repository contains workflow/config.json.
+description: Orchestrate a bounded coding task from decision alignment through local spec, tracer-bullet tickets, implementation, verification, and review with native-worktree awareness, controlled subagents, deterministic checks, finite fix loops, and auditable evidence. Use for non-trivial coding work, hard bugs, design questions, multi-session implementation, or whenever a repository contains workflow/config.json.
 ---
 
 # Codex Workflow
 
 Keep the main thread responsible for scope, decisions, integration, and final verification. Use scripts for repeatable checks and use subagents only when their work is independent and bounded.
 
-## Cognitive routing
+## One-call planning orchestration
 
-Before creating a task packet, classify what is missing:
+An explicit `$codex-workflow` invocation authorizes the complete internal workflow. The user does
+not need to invoke a separate Matt orchestration skill first.
 
-- unresolved user decisions -> use `grilling`; add `domain-modeling` when domain language or a durable decision is involved;
-- missing public facts -> use `research`;
-- a runnable state, logic, or UI question -> use `prototype`;
-- a hard bug without a tight reproduction -> use `diagnosing-bugs`;
-- clear, bounded implementation -> start the workflow directly.
+During PLAN:
 
-During execution, use `tdd` for behavior changes and `codebase-design` for interface or seam decisions.
-After deterministic verification, use `code-review` for separate Standards and Spec judgments.
+1. Inspect repository facts first and record unresolved decisions.
+2. When a decision is genuinely user-owned, apply `grilling` inside this workflow: ask one question
+   at a time, challenge vague answers, and record the resolution. Add `domain-modeling` when
+   terminology or a durable architectural decision matters.
+3. Apply `research`, `prototype`, or `diagnosing-bugs` only for the uncertainty each discipline
+   owns. Resolve discoverable facts without asking the user.
+4. Synthesize a local `spec.md` for medium and contract work. The spec defines goals, non-goals,
+   behavior, contracts, acceptance criteria, constraints, and verification.
+5. For work expected to span sessions, create tracer-bullet tickets with explicit `blocked_by`
+   edges and ticket-level acceptance criteria. Keep these local unless the user separately
+   authorizes publishing to an external issue tracker.
+6. Mark planning ready only after decisions, acceptance criteria, spec, and required tickets are
+   complete. Then enter EXECUTE.
 
-These are model-invoked disciplines. Do not implicitly invoke Matt's user-invoked orchestrators
-such as `grill-with-docs`, `to-spec`, `to-tickets`, or `wayfinder`; recommend them when appropriate
-and continue only after the user invokes them. Read
-[references/cognitive-routing.md](references/cognitive-routing.md) for routing, delegation, and
-fallback rules.
+This embeds the useful process from Matt's planning skills; it does not implicitly invoke their
+user-facing wrappers or change their `allow_implicit_invocation` setting. `grill-with-docs`,
+`to-spec`, and `to-tickets` remain useful when the user wants only that artifact. Recommend
+explicit `wayfinder` for a broad, foggy program that should be mapped before becoming a bounded
+workflow.
+
+During execution, use `tdd` for behavior changes and `codebase-design` for interface or seam
+decisions. After deterministic verification, use `code-review` for separate Standards and Spec
+judgments. Read [references/planning-orchestration.md](references/planning-orchestration.md) and
+[references/cognitive-routing.md](references/cognitive-routing.md).
 
 ## Command
 
@@ -76,13 +89,40 @@ Never create a nested worktree when Codex already placed the chat in one. Use an
    workflow.ps1 start --title "<task>" --tier medium --workflow-class <class> --owned-path <path> --skill <discipline> --source-ref <issue-or-spec>
    ```
 
-4. Complete the plan, record acceptance criteria in the generated `brief.md`, then:
+4. Complete the auditable plan. Record open questions as soon as they are found:
+
+   ```powershell
+   workflow.ps1 plan <task-id> --open-decision "<decision>"
+   ```
+
+   Record resolutions and acceptance criteria:
+
+   ```powershell
+   workflow.ps1 plan <task-id> --resolve-decision "<decision>" --decision "<resolution>" --acceptance "<criterion>"
+   ```
+
+   For medium or contract work, write `workflow/tasks/<task-id>/spec.md`, then register it. For
+   multi-session work, also create tickets and dependency edges:
+
+   ```powershell
+   workflow.ps1 ticket <task-id> --ticket-id T1 --title "<tracer>" --acceptance "<criterion>"
+   workflow.ps1 ticket <task-id> --ticket-id T2 --title "<next slice>" --blocked-by T1 --acceptance "<criterion>"
+   workflow.ps1 plan <task-id> --spec-ref workflow/tasks/<task-id>/spec.md --multi-session --status ready
+   ```
+
+   For a single-session small task, acceptance criteria and ready status are sufficient:
+
+   ```powershell
+   workflow.ps1 plan <task-id> --acceptance "<criterion>" --status ready
+   ```
+
+   The transition command enforces the planning gate:
 
    ```powershell
    workflow.ps1 transition <task-id> --to EXECUTE
    ```
 
-   If routing changes while still in PLAN or BLOCKED, record it:
+   If cognitive routing changes while still in PLAN or BLOCKED, record it:
 
    ```powershell
    workflow.ps1 route <task-id> --skill research --source-ref <artifact> --routing-note "<why>"

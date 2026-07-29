@@ -1,7 +1,7 @@
 {
   "name": "ai-workflow-codex",
-  "version": "1.0.0+codex.20260729064009",
-  "description": "Cognitively routed Codex workflow with deterministic verification",
+  "version": "1.0.0+codex.20260729074613",
+  "description": "One-call Codex workflow from decision alignment through verified implementation",
   "author": {
     "name": "admin"
   },
@@ -10,8 +10,8 @@
   "skills": "./skills/",
   "interface": {
     "displayName": "AI Workflow for Codex",
-    "shortDescription": "Route, execute, verify, and close coding tasks safely.",
-    "longDescription": "A Codex-native workflow that selects focused thinking disciplines, preserves task evidence and project checks, and controls subagents, native worktrees, finite review loops, and deterministic environment diagnostics.",
+    "shortDescription": "Align, specify, execute, and verify coding tasks safely.",
+    "longDescription": "A Codex-native workflow that aligns unresolved decisions, creates local specs and tracer-bullet tickets when needed, then controls bounded agents, native worktrees, finite review loops, and deterministic verification.",
     "developerName": "admin",
     "category": "Productivity",
     "capabilities": [

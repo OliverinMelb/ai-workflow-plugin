@@ -20,6 +20,16 @@ bug reproduction using `references/cognitive-routing.md`. Record selected discip
 artifacts, and short routing notes in the task packet. Cognitive skills inform the workflow; they
 do not own task state, delegation, worktrees, integration, or closure.
 
+New task packets also carry an enforced planning record. `PLAN -> EXECUTE` requires `status=ready`,
+at least one acceptance criterion, and no unresolved decisions. Medium and contract tasks require
+a repository-local spec. Multi-session tasks additionally require tracer-bullet tickets with
+ticket-level acceptance criteria and a valid acyclic `blocked_by` graph. Legacy task packets
+with schema version 1 remain resumable; schema version 2 cannot omit its planning record.
+
+Passing verification binds evidence to the semantic planning record and the registered spec
+content hash. Changing either after verification makes the evidence stale and requires a new
+verification run.
+
 ## Ownership
 
 Record explicit `owned_paths` for every write-capable task. A path owns itself and descendants. Changes outside owned paths fail verification unless they are unchanged pre-existing dirty files recorded at task start.
