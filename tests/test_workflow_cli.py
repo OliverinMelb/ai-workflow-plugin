@@ -43,6 +43,8 @@ class WorkflowCliTest(unittest.TestCase):
             "workflow_classes": {"app-change": ["app"]},
         }
         (workflow / "config.json").write_text(json.dumps(config), encoding="utf-8")
+        (self.repo / "AGENTS.md").write_text("# Rules\n", encoding="utf-8")
+        self.workflow("setup")
         self.run_cmd("git", "add", ".")
         self.run_cmd("git", "commit", "-qm", "fixture")
 
@@ -656,6 +658,310 @@ class WorkflowInitTest(unittest.TestCase):
         generic = self.dry_run_fixture("generic", {})
         self.assertEqual(generic["workflow_classes"]["app-change"], ["repository"])
         self.assertEqual(generic["checks"]["repository"][0]["args"], ["diff", "--check"])
+
+    def test_setup_adds_local_project_conventions(self) -> None:
+        self.workflow("init", "--project-name", "fixture")
+        (self.repo / "AGENTS.md").write_text("# Project rules\n", encoding="utf-8")
+        result = self.workflow(
+            "setup",
+            "--tracker",
+            "local",
+            "--publication-policy",
+            "explicit",
+            "--domain-layout",
+            "single",
+            "--with-triage",
+        )
+        self.assertIn("tracker=local", result.stdout)
+        self.workflow(
+            "setup",
+            "--tracker",
+            "local",
+            "--publication-policy",
+            "explicit",
+            "--domain-layout",
+            "single",
+            "--with-triage",
+        )
+        config = json.loads(
+            (self.repo / "workflow" / "config.json").read_text(encoding="utf-8")
+        )
+        conventions = config["project_conventions"]
+        self.assertEqual(conventions["tracker"]["kind"], "local")
+        self.assertEqual(
+            conventions["tracker"]["publication_policy"],
+            "explicit",
+        )
+        self.assertTrue(conventions["triage"]["enabled"])
+        self.assertIn(
+            "Issue tracker: docs/agents/issue-tracker.md",
+            config["memory"]["pointers"],
+        )
+        tracker = (self.repo / "docs" / "agents" / "issue-tracker.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(".scratch/<feature>/issues/", tracker)
+        self.assertIn("explicit user authorization", tracker)
+        agents = (self.repo / "AGENTS.md").read_text(encoding="utf-8")
+        self.assertEqual(agents.count("## Agent skills"), 1)
+        self.assertIn("codex-workflow:project-conventions:start", agents)
+
+    def test_setup_dry_run_writes_nothing(self) -> None:
+        self.workflow("init")
+        result = self.workflow(
+            "setup",
+            "--agent-file",
+            "CLAUDE.md",
+            "--dry-run",
+        )
+        preview = json.loads(result.stdout)
+        self.assertEqual(preview["project_conventions"]["tracker"]["kind"], "local")
+        self.assertIn("CLAUDE.md", preview["files"])
+        self.assertFalse((self.repo / "CLAUDE.md").exists())
+        config = json.loads(
+            (self.repo / "workflow" / "config.json").read_text(encoding="utf-8")
+        )
+        self.assertNotIn("project_conventions", config)
+
+    def test_setup_forbidden_policy_rejects_remote_tracker(self) -> None:
+        self.workflow("init")
+        (self.repo / "AGENTS.md").write_text("# Rules\n", encoding="utf-8")
+        result = self.workflow(
+            "setup",
+            "--tracker",
+            "github",
+            "--publication-policy",
+            "forbidden",
+            expected=2,
+        )
+        self.assertIn("requires the local tracker", result.stdout)
+        self.assertFalse((self.repo / "docs" / "agents").exists())
+
+    def test_setup_refuses_unmanaged_agent_skills_section(self) -> None:
+        self.workflow("init")
+        (self.repo / "AGENTS.md").write_text(
+            "## Agent skills\n\nUser-owned rules.\n",
+            encoding="utf-8",
+        )
+        result = self.workflow("setup", expected=2)
+        self.assertIn("merge it manually", result.stdout)
+        self.assertFalse((self.repo / "docs" / "agents").exists())
+
+    def test_non_micro_start_requires_project_conventions(self) -> None:
+        self.workflow("init")
+        result = self.workflow(
+            "start",
+            "--title",
+            "missing setup",
+            "--tier",
+            "small",
+            expected=2,
+        )
+        self.assertIn("run workflow setup", result.stdout)
+
+    def test_start_rejects_tampered_forbidden_remote_conventions(self) -> None:
+        self.workflow("init")
+        (self.repo / "AGENTS.md").write_text("# Rules\n", encoding="utf-8")
+        self.workflow("setup", "--publication-policy", "forbidden")
+        config_path = self.repo / "workflow" / "config.json"
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+        config["project_conventions"]["tracker"]["kind"] = "github"
+        config["project_conventions"]["tracker"]["remote"] = "https://example.invalid/repo"
+        config_path.write_text(json.dumps(config), encoding="utf-8")
+        result = self.workflow(
+            "start",
+            "--title",
+            "tampered policy",
+            "--tier",
+            "small",
+            expected=2,
+        )
+        self.assertIn("forbidden publication requires the local tracker", result.stdout)
+
+    def test_start_rejects_tampered_convention_document(self) -> None:
+        self.workflow("init")
+        (self.repo / "AGENTS.md").write_text("# Rules\n", encoding="utf-8")
+        self.workflow("setup")
+        (self.repo / "docs" / "agents" / "issue-tracker.md").write_text(
+            "# Replaced\n",
+            encoding="utf-8",
+        )
+        result = self.workflow(
+            "start",
+            "--title",
+            "tampered docs",
+            "--tier",
+            "small",
+            expected=2,
+        )
+        self.assertIn("Project convention changed", result.stdout)
+
+    def test_start_rejects_tampered_managed_agent_block(self) -> None:
+        self.workflow("init")
+        agent = self.repo / "AGENTS.md"
+        agent.write_text("# Rules\n", encoding="utf-8")
+        self.workflow("setup")
+        content = agent.read_text(encoding="utf-8")
+        agent.write_text(
+            content.replace(
+                "Publication policy is `explicit`",
+                "Publication policy is `forbidden`",
+            ),
+            encoding="utf-8",
+        )
+        result = self.workflow(
+            "start",
+            "--title",
+            "tampered block",
+            "--tier",
+            "small",
+            expected=2,
+        )
+        self.assertIn("Managed project-conventions block changed", result.stdout)
+
+    def test_setup_rejects_reversed_managed_markers(self) -> None:
+        self.workflow("init")
+        (self.repo / "AGENTS.md").write_text(
+            "<!-- codex-workflow:project-conventions:end -->\n"
+            "content\n"
+            "<!-- codex-workflow:project-conventions:start -->\n",
+            encoding="utf-8",
+        )
+        result = self.workflow("setup", expected=2)
+        self.assertIn("Reversed managed", result.stdout)
+
+    def test_other_tracker_and_triage_overrides_are_recorded(self) -> None:
+        self.workflow("init")
+        (self.repo / "CLAUDE.md").write_text("# Rules\n", encoding="utf-8")
+        self.workflow(
+            "setup",
+            "--tracker",
+            "other",
+            "--tracker-url",
+            "https://tracker.example.invalid/project",
+            "--tracker-instructions",
+            "Use the internal tracker client for fetch, comment, and close.",
+            "--with-triage",
+            "--triage-label",
+            "needs-triage=bug:triage",
+        )
+        tracker = (self.repo / "docs" / "agents" / "issue-tracker.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("Wayfinding operations", tracker)
+        self.assertIn("fetch, comment, and close", tracker)
+        labels = (self.repo / "docs" / "agents" / "triage-labels.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("needs-triage: `bug:triage`", labels)
+        started = self.workflow(
+            "start",
+            "--title",
+            "custom tracker task",
+            "--tier",
+            "small",
+        )
+        self.assertIn("state=PLAN", started.stdout)
+
+    def test_rh_task_requires_private_project_profile(self) -> None:
+        self.workflow("init")
+        (self.repo / "AGENTS.md").write_text("# Rules\n", encoding="utf-8")
+        self.workflow("setup")
+        result = self.workflow(
+            "start",
+            "--title",
+            "rh task",
+            "--tier",
+            "small",
+            "--skill",
+            "rh-company-workflow",
+            expected=2,
+        )
+        self.assertIn("RH tasks require private project conventions", result.stdout)
+
+    def test_setup_rejects_agent_symlink_outside_repository(self) -> None:
+        self.workflow("init")
+        outside = self.repo.parent / f"{self.repo.name}-outside-agent.md"
+        outside.write_text("keep\n", encoding="utf-8")
+        link = self.repo / "AGENTS.md"
+        try:
+            try:
+                link.symlink_to(outside)
+            except OSError as exc:
+                self.skipTest(f"Symlink creation is unavailable: {exc}")
+            result = self.workflow("setup", expected=2)
+            self.assertIn("escapes the repository", result.stdout)
+            self.assertEqual(outside.read_text(encoding="utf-8"), "keep\n")
+        finally:
+            if outside.exists():
+                outside.unlink()
+
+    def test_private_profile_allows_rh_task_with_local_forbidden_policy(self) -> None:
+        self.workflow("init")
+        (self.repo / "AGENTS.md").write_text("# Rules\n", encoding="utf-8")
+        self.workflow(
+            "setup",
+            "--profile",
+            "private",
+            "--tracker",
+            "local",
+            "--publication-policy",
+            "forbidden",
+        )
+        result = self.workflow(
+            "start",
+            "--title",
+            "private rh task",
+            "--tier",
+            "small",
+            "--skill",
+            "rh-company-workflow",
+        )
+        self.assertIn("state=PLAN", result.stdout)
+
+    def test_setup_rejects_credentials_in_tracker_url_without_echoing_them(self) -> None:
+        self.workflow("init")
+        (self.repo / "AGENTS.md").write_text("# Rules\n", encoding="utf-8")
+        result = self.workflow(
+            "setup",
+            "--tracker",
+            "github",
+            "--tracker-url",
+            "https://user:super-secret@github.com/example/repo.git",
+            expected=2,
+        )
+        self.assertIn("contains credentials", result.stdout)
+        self.assertNotIn("super-secret", result.stdout)
+        self.assertFalse((self.repo / "docs" / "agents").exists())
+        query_result = self.workflow(
+            "setup",
+            "--tracker",
+            "other",
+            "--tracker-url",
+            "https://tracker.example.invalid/project?private_token=super-secret",
+            "--tracker-instructions",
+            "Use the tracker client.",
+            expected=2,
+        )
+        self.assertIn("query data", query_result.stdout)
+        self.assertNotIn("super-secret", query_result.stdout)
+
+    def test_github_tracker_document_contains_deterministic_operations(self) -> None:
+        self.workflow("init")
+        (self.repo / "AGENTS.md").write_text("# Rules\n", encoding="utf-8")
+        self.workflow(
+            "setup",
+            "--tracker",
+            "github",
+            "--tracker-url",
+            "https://github.com/example/repo.git",
+        )
+        tracker = (self.repo / "docs" / "agents" / "issue-tracker.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("gh issue view", tracker)
+        self.assertIn("pull_request", tracker)
+        self.assertIn("wayfinder frontier", tracker)
 
 
 if __name__ == "__main__":

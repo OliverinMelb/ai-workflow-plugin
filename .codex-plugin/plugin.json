@@ -1,7 +1,7 @@
 {
   "name": "ai-workflow-codex",
-  "version": "1.0.0+codex.20260729074613",
-  "description": "One-call Codex workflow from decision alignment through verified implementation",
+  "version": "1.0.0+codex.20260729082526",
+  "description": "One-call Codex workflow with project setup, decision alignment, and verified implementation",
   "author": {
     "name": "admin"
   },
@@ -11,7 +11,7 @@
   "interface": {
     "displayName": "AI Workflow for Codex",
     "shortDescription": "Align, specify, execute, and verify coding tasks safely.",
-    "longDescription": "A Codex-native workflow that aligns unresolved decisions, creates local specs and tracer-bullet tickets when needed, then controls bounded agents, native worktrees, finite review loops, and deterministic verification.",
+    "longDescription": "A Codex-native workflow that initializes project checks and agent conventions, aligns unresolved decisions, creates local specs and tracer-bullet tickets, then controls bounded agents, native worktrees, review loops, and deterministic verification.",
     "developerName": "admin",
     "category": "Productivity",
     "capabilities": [

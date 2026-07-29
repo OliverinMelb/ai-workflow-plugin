@@ -20,6 +20,54 @@ It creates a conservative starting configuration and immediately runs `doctor`.
 - Generated contract and environment sections are intentionally minimal; extend them only with
   verified project facts.
 
+## Project conventions
+
+Run `workflow.ps1 setup` once after `init`. It records the tracker, publication policy, domain
+layout, triage vocabulary, and chosen agent-guidance file:
+
+```json
+{
+  "project_conventions": {
+    "schema_version": 1,
+    "profile": "standard",
+    "tracker": {
+      "kind": "local",
+      "remote": null,
+      "doc": "docs/agents/issue-tracker.md",
+      "publication_policy": "explicit"
+    },
+    "domain": {
+      "layout": "single",
+      "doc": "docs/agents/domain.md"
+    },
+    "triage": {
+      "enabled": true,
+      "doc": "docs/agents/triage-labels.md"
+    },
+    "agent_file": "AGENTS.md",
+    "integrity": {
+      "documents": {
+        "docs/agents/issue-tracker.md": "<sha256>",
+        "docs/agents/domain.md": "<sha256>",
+        "docs/agents/triage-labels.md": "<sha256>"
+      },
+      "agent_block_sha256": "<sha256>"
+    }
+  }
+}
+```
+
+`tracker.kind` is `local`, `github`, `gitlab`, or `other`. `publication_policy=explicit` requires separate
+user authorization for remote writes. `publication_policy=forbidden` prohibits remote publication
+and requires the local tracker.
+
+`profile=private` additionally requires `local + forbidden`. Content hashes bind the generated
+consumer documents and managed agent block; non-micro work refuses to start if they are missing or
+changed. `tracker.kind=other` is supported with explicit custom operation instructions.
+
+Preview with `setup --dry-run`. The command refuses to overwrite existing convention documents or
+replace an unmanaged `## Agent skills` section.
+
 Add this optional block for Codex routing:
 
 ```json

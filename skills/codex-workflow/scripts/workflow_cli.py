@@ -17,8 +17,9 @@ import sys
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
-ENGINE_VERSION = "1.1.0"
+ENGINE_VERSION = "1.2.0"
 ACTIVE_STATES = {"PLAN", "EXECUTE", "VERIFY", "REVIEW", "FIX", "INTEGRATE", "BLOCKED"}
 ALLOWED = {
     "PLAN": {"EXECUTE", "BLOCKED"},
@@ -93,7 +94,7 @@ def repo_root(start: Path | None = None) -> Path:
 
 
 def load_config(repo: Path) -> tuple[Path, dict[str, Any]]:
-    path = repo / "workflow" / "config.json"
+    path = safe_repo_target(repo, "workflow/config.json")
     if not path.exists():
         raise WorkflowError(f"Missing workflow configuration: {path}")
     try:
@@ -352,7 +353,7 @@ def generated_config(repo: Path, project_name: str | None = None) -> tuple[dict[
 
 def cmd_init(args: argparse.Namespace) -> int:
     repo = repo_root()
-    path = repo / "workflow" / "config.json"
+    path = safe_repo_target(repo, "workflow/config.json")
     if path.exists():
         raise WorkflowError(f"Workflow configuration already exists; refusing to overwrite: {path}")
     config, detected = generated_config(repo, args.project_name)
@@ -364,6 +365,371 @@ def cmd_init(args: argparse.Namespace) -> int:
     print(f"detected={','.join(detected)}")
     print("doctor:")
     return cmd_doctor(argparse.Namespace())
+
+
+MANAGED_AGENT_START = "<!-- codex-workflow:project-conventions:start -->"
+MANAGED_AGENT_END = "<!-- codex-workflow:project-conventions:end -->"
+
+
+def text_sha256(value: str) -> str:
+    normalized = value.replace("\r\n", "\n").replace("\r", "\n")
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def safe_repo_target(repo: Path, relative: str) -> Path:
+    candidate = Path(relative)
+    if candidate.is_absolute():
+        raise WorkflowError("Project convention paths must be repository-relative")
+    resolved = (repo / candidate).resolve()
+    try:
+        resolved.relative_to(repo.resolve())
+    except ValueError as exc:
+        raise WorkflowError(
+            f"Project convention path escapes the repository: {relative}"
+        ) from exc
+    return resolved
+
+
+def selected_agent_file(repo: Path, requested: str | None) -> Path:
+    if requested:
+        if requested not in {"AGENTS.md", "CLAUDE.md"}:
+            raise WorkflowError("--agent-file must be AGENTS.md or CLAUDE.md")
+        return safe_repo_target(repo, requested)
+    if (repo / "CLAUDE.md").is_file():
+        return safe_repo_target(repo, "CLAUDE.md")
+    if (repo / "AGENTS.md").is_file():
+        return safe_repo_target(repo, "AGENTS.md")
+    raise WorkflowError(
+        "No AGENTS.md or CLAUDE.md exists; choose one with --agent-file"
+    )
+
+
+def tracker_remote(repo: Path, tracker: str, requested: str | None) -> str | None:
+    if tracker == "local":
+        return None
+    if tracker == "other":
+        remote = requested
+    else:
+        remote = requested or git(repo, "remote", "get-url", "origin", check=False)
+    if not remote and tracker != "other":
+        raise WorkflowError(
+            f"{tracker} tracker requires --tracker-url or an origin remote"
+        )
+    if not remote:
+        return None
+    parsed = urlsplit(remote)
+    http_userinfo = parsed.scheme.lower() in {"http", "https"} and parsed.username
+    if parsed.password or http_userinfo or parsed.query or parsed.fragment:
+        raise WorkflowError(
+            "Tracker URL contains credentials or query data; use a credential-free base URL"
+        )
+    return remote
+
+
+def convention_documents(
+    tracker: str,
+    remote: str | None,
+    publication_policy: str,
+    domain_layout: str,
+    triage_labels: dict[str, str] | None,
+    tracker_instructions: str | None,
+) -> dict[str, str]:
+    if tracker == "local":
+        tracker_location = "Local Markdown under `.scratch/<feature>/issues/`."
+        operations = (
+            "Use `.scratch/<feature>/spec.md` for a standalone spec and one file per ticket under "
+            "`.scratch/<feature>/issues/<ticket-id>.md`. Each ticket records status, acceptance "
+            "criteria, `Blocked by`, and dated comment sections. List/frontier operations scan "
+            "those files; claim changes status to `in-progress`; resolve records the outcome and "
+            "sets status to `closed`. Codex Workflow evidence remains under "
+            "`workflow/tasks/<task-id>/`."
+        )
+    elif tracker == "other":
+        tracker_location = f"Custom tracker at `{remote or 'user-defined location'}`."
+        operations = tracker_instructions or ""
+    elif tracker == "github":
+        tracker_location = f"GitHub issues at `{remote}`."
+        operations = (
+            "Use credential-free `gh` commands after publication is authorized:\n\n"
+            "```text\n"
+            "read:    gh issue view <number> --json number,title,body,state,labels,assignees,comments\n"
+            "list:    gh issue list --state <open|closed|all> --json number,title,state,labels,assignees\n"
+            "create:  gh issue create --title <title> --body-file <file> --label <label>\n"
+            "update:  gh issue edit <number> --title <title> --body-file <file> [--add-label <label>]\n"
+            "comment: gh issue comment <number> --body-file <file>\n"
+            "close:   gh issue close <number> --comment <outcome>\n"
+            "claim:   gh issue edit <number> --add-assignee @me\n"
+            "```\n\n"
+            "GitHub issue and PR numbers share a namespace. Before treating a number as an issue, "
+            "query `gh api repos/{owner}/{repo}/issues/<number>`; a `pull_request` field means it is "
+            "a PR and must be ignored while `prs_as_request_surface=false`. Prefer native "
+            "sub-issue/blocking relationships when the repository exposes them; otherwise keep "
+            "`Blocked by: #<number>` in every body and update both sides explicitly. Query a "
+            "wayfinder frontier with `gh issue list --state open --label wayfinder:decision --json "
+            "number,title,body,labels,assignees`, then select only tickets whose `Blocked by` issues "
+            "are closed. Claim before work and close with an outcome comment."
+        )
+    else:
+        tracker_location = f"GitLab issues at `{remote}`."
+        operations = (
+            "Use credential-free `glab` commands after publication is authorized:\n\n"
+            "```text\n"
+            "read:    glab issue view <iid> --comments\n"
+            "list:    glab issue list --state <opened|closed|all>\n"
+            "create:  glab issue create --title <title> --description <body> --label <label>\n"
+            "update:  glab issue update <iid> --title <title> --description <body>\n"
+            "comment: glab issue note <iid> --message <comment>\n"
+            "close:   glab issue close <iid>\n"
+            "claim:   glab issue update <iid> --assignee @me\n"
+            "```\n\n"
+            "Issue and merge-request IIDs are distinct resources; confirm with `glab issue view` "
+            "and never substitute `glab mr view` results while `prs_as_request_surface=false`. "
+            "Use native related/blocking issues where configured; otherwise keep `Blocked by: "
+            "#<iid>` in each description. Query the wayfinder frontier with `glab issue list "
+            "--state opened --label wayfinder:decision`, inspect blockers, claim before work, add "
+            "the decision as a note, and close only after the map is updated."
+        )
+    issue_tracker = (
+        "# Issue tracker\n\n"
+        f"- kind: `{tracker}`\n"
+        f"- location: {tracker_location}\n"
+        f"- publication_policy: `{publication_policy}`\n"
+        "- prs_as_request_surface: `false`\n\n"
+        "## Operations\n\n"
+        f"{operations}\n\n"
+        "The configured adapter must support fetch/read, list/query, create, update, comment, and "
+        "close operations. For local Markdown these are filesystem reads and bounded file edits; "
+        "for remote trackers they are CLI/API operations.\n\n"
+        "Distinguish issues from pull/merge requests; PRs/MRs are not a request surface unless "
+        "`prs_as_request_surface` is deliberately changed. A spec is one canonical artifact; "
+        "tickets are tracer-bullet vertical slices with explicit status and blocking edges.\n\n"
+        "## Wayfinding operations\n\n"
+        "Create one map issue and child decision tickets. Query the frontier as open children with "
+        "no unresolved blockers. Claim one decision ticket before work, append evidence/comments, "
+        "resolve at most one non-research decision per session, then update the map and newly "
+        "visible frontier. Never treat the map itself as the implementation spec.\n\n"
+        "A Workflow invocation authorizes local planning artifacts only. "
+        + (
+            "Remote issue creation or modification always requires explicit user authorization.\n"
+            if publication_policy == "explicit"
+            else "Remote issue creation, modification, and publication are forbidden.\n"
+        )
+    )
+    if domain_layout == "single":
+        domain_description = (
+            "Use root `CONTEXT.md` as the domain glossary and `docs/adr/` for durable decisions."
+        )
+    else:
+        domain_description = (
+            "Use root `CONTEXT-MAP.md` to route to per-context `CONTEXT.md` files; keep ADRs near "
+            "their owning context."
+        )
+    domain = (
+        "# Domain documentation\n\n"
+        f"- layout: `{domain_layout}`\n\n"
+        f"{domain_description}\n\n"
+        "If a referenced domain document does not exist, continue without inventing its contents. "
+        "Read the relevant glossary and ADRs before naming interfaces, tests, specs, or tickets. "
+        "Use one term per concept and challenge overloaded vocabulary before it reaches an "
+        "interface. Existing ADRs outrank a new proposal until an explicit superseding decision is "
+        "recorded. Update domain docs only when their paths are explicitly owned by the task.\n"
+    )
+    documents = {
+        "docs/agents/issue-tracker.md": issue_tracker,
+        "docs/agents/domain.md": domain,
+    }
+    if triage_labels is not None:
+        documents["docs/agents/triage-labels.md"] = (
+            "# Triage labels\n\n"
+            + "".join(
+                f"- {role}: `{triage_labels[role]}`\n"
+                for role in (
+                    "needs-triage",
+                    "needs-info",
+                    "ready-for-agent",
+                    "ready-for-human",
+                    "wontfix",
+                )
+            )
+        )
+    return documents
+
+
+def parsed_triage_labels(values: list[str], enabled: bool) -> dict[str, str] | None:
+    if not enabled:
+        if values:
+            raise WorkflowError("--triage-label requires --with-triage")
+        return None
+    roles = {
+        "needs-triage",
+        "needs-info",
+        "ready-for-agent",
+        "ready-for-human",
+        "wontfix",
+    }
+    labels = {role: role for role in roles}
+    for value in values:
+        if "=" not in value:
+            raise WorkflowError("--triage-label must use role=value")
+        role, label = (part.strip() for part in value.split("=", 1))
+        if role not in roles or not label:
+            raise WorkflowError(f"Invalid triage label override: {value}")
+        labels[role] = label
+    return labels
+
+
+def agent_conventions_block(
+    tracker: str,
+    domain_layout: str,
+    with_triage: bool,
+    publication_policy: str,
+) -> str:
+    tracker_summary = (
+        "Local Markdown issues are stored under `.scratch/<feature>/issues/`."
+        if tracker == "local"
+        else f"Use the configured {tracker.title()} tracker."
+    )
+    lines = [
+        MANAGED_AGENT_START,
+        "## Agent skills",
+        "",
+        "### Issue tracker",
+        "",
+        f"{tracker_summary} Publication policy is `{publication_policy}`. "
+        "See `docs/agents/issue-tracker.md`.",
+    ]
+    if with_triage:
+        lines.extend(
+            [
+                "",
+                "### Triage labels",
+                "",
+                "Use the canonical project label mapping. See `docs/agents/triage-labels.md`.",
+            ]
+        )
+    lines.extend(
+        [
+            "",
+            "### Domain docs",
+            "",
+            f"Use the `{domain_layout}` domain layout. See `docs/agents/domain.md`.",
+            MANAGED_AGENT_END,
+        ]
+    )
+    return "\n".join(lines) + "\n"
+
+
+def with_managed_agent_block(path: Path, block: str) -> str:
+    current = path.read_text(encoding="utf-8-sig") if path.is_file() else ""
+    if MANAGED_AGENT_START in current or MANAGED_AGENT_END in current:
+        if current.count(MANAGED_AGENT_START) != 1 or current.count(MANAGED_AGENT_END) != 1:
+            raise WorkflowError(f"Malformed managed project-conventions block in {path}")
+        start = current.index(MANAGED_AGENT_START)
+        end_start = current.index(MANAGED_AGENT_END)
+        if end_start <= start:
+            raise WorkflowError(f"Reversed managed project-conventions markers in {path}")
+        end = end_start + len(MANAGED_AGENT_END)
+        return current[:start] + block.rstrip() + current[end:]
+    if re.search(r"(?m)^## Agent skills\s*$", current):
+        raise WorkflowError(
+            f"{path.name} has an unmanaged '## Agent skills' section; merge it manually"
+        )
+    separator = "\n\n" if current.strip() else ""
+    return current.rstrip() + separator + block
+
+
+def cmd_setup(args: argparse.Namespace) -> int:
+    repo = repo_root()
+    config_path = safe_repo_target(repo, "workflow/config.json")
+    _, config = load_config(repo)
+    if args.publication_policy == "forbidden" and args.tracker != "local":
+        raise WorkflowError("Forbidden publication policy requires the local tracker")
+    if args.profile == "private" and (
+        args.tracker != "local" or args.publication_policy != "forbidden"
+    ):
+        raise WorkflowError("Private profile requires local tracker with forbidden publication")
+    if args.tracker == "other" and not (args.tracker_instructions or "").strip():
+        raise WorkflowError("Other tracker requires --tracker-instructions")
+    agent_path = selected_agent_file(repo, args.agent_file)
+    remote = tracker_remote(repo, args.tracker, args.tracker_url)
+    triage_labels = parsed_triage_labels(args.triage_label, args.with_triage)
+    documents = convention_documents(
+        args.tracker,
+        remote,
+        args.publication_policy,
+        args.domain_layout,
+        triage_labels,
+        args.tracker_instructions,
+    )
+    block = agent_conventions_block(
+        args.tracker,
+        args.domain_layout,
+        args.with_triage,
+        args.publication_policy,
+    )
+    agent_content = with_managed_agent_block(agent_path, block)
+    conventions = {
+        "schema_version": 1,
+        "profile": args.profile,
+        "tracker": {
+            "kind": args.tracker,
+            "remote": remote,
+            "doc": "docs/agents/issue-tracker.md",
+            "publication_policy": args.publication_policy,
+        },
+        "domain": {
+            "layout": args.domain_layout,
+            "doc": "docs/agents/domain.md",
+        },
+        "triage": {
+            "enabled": args.with_triage,
+            "doc": "docs/agents/triage-labels.md" if args.with_triage else None,
+            "labels": triage_labels,
+        },
+        "agent_file": agent_path.name,
+        "integrity": {
+            "documents": {
+                relative: text_sha256(content)
+                for relative, content in documents.items()
+            },
+            "agent_block_sha256": text_sha256(block.rstrip()),
+        },
+    }
+    preview = {
+        "project_conventions": conventions,
+        "files": {
+            **documents,
+            agent_path.name: agent_content,
+        },
+    }
+    if args.dry_run:
+        print(json.dumps(preview, ensure_ascii=False, indent=2))
+        return 0
+    for relative, content in documents.items():
+        path = safe_repo_target(repo, relative)
+        if path.exists() and path.read_text(encoding="utf-8-sig") != content:
+            raise WorkflowError(f"Refusing to overwrite existing project convention: {path}")
+    for relative, content in documents.items():
+        path = safe_repo_target(repo, relative)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+    agent_path.write_text(agent_content, encoding="utf-8")
+    config["project_conventions"] = conventions
+    pointers = [
+        *config.setdefault("memory", {}).get("pointers", []),
+        f"Agent rules: {agent_path.name}",
+        "Issue tracker: docs/agents/issue-tracker.md",
+        "Domain docs: docs/agents/domain.md",
+    ]
+    if args.with_triage:
+        pointers.append("Triage labels: docs/agents/triage-labels.md")
+    config["memory"]["pointers"] = normalized_strings(pointers)
+    atomic_json(config_path, config)
+    print(f"configured={config_path}")
+    print(f"tracker={args.tracker}")
+    print(f"publication_policy={args.publication_policy}")
+    print(f"agent_file={agent_path.name}")
+    return 0
 
 
 def sha256_bytes(value: bytes) -> str:
@@ -615,6 +981,83 @@ def write_planning_artifact(repo: Path, task: dict[str, Any]) -> None:
     )
 
 
+def validate_project_conventions(repo: Path, config: dict[str, Any]) -> None:
+    conventions = config.get("project_conventions")
+    if not isinstance(conventions, dict):
+        raise WorkflowError(
+            "Missing project_conventions; run workflow setup before starting non-micro work"
+        )
+    if conventions.get("schema_version") != 1:
+        raise WorkflowError("Invalid project_conventions schema_version")
+    profile = conventions.get("profile")
+    if profile not in {"standard", "private"}:
+        raise WorkflowError("Invalid project_conventions profile")
+    tracker = conventions.get("tracker")
+    if not isinstance(tracker, dict):
+        raise WorkflowError("Invalid project_conventions tracker")
+    kind = tracker.get("kind")
+    policy = tracker.get("publication_policy")
+    if kind not in {"local", "github", "gitlab", "other"}:
+        raise WorkflowError("Invalid project_conventions tracker kind")
+    if policy not in {"explicit", "forbidden"}:
+        raise WorkflowError("Invalid project_conventions publication policy")
+    if policy == "forbidden" and kind != "local":
+        raise WorkflowError(
+            "Invalid project_conventions: forbidden publication requires the local tracker"
+        )
+    if kind == "local" and tracker.get("remote") is not None:
+        raise WorkflowError("Invalid project_conventions: local tracker cannot have a remote")
+    if kind != "local" and not tracker.get("remote"):
+        if kind != "other":
+            raise WorkflowError("Invalid project_conventions: remote tracker URL is missing")
+    if profile == "private" and (kind != "local" or policy != "forbidden"):
+        raise WorkflowError(
+            "Invalid project_conventions: private profile requires local forbidden policy"
+        )
+    references = [tracker.get("doc")]
+    domain = conventions.get("domain")
+    if not isinstance(domain, dict) or domain.get("layout") not in {"single", "multi"}:
+        raise WorkflowError("Invalid project_conventions domain layout")
+    references.append(domain.get("doc"))
+    triage = conventions.get("triage")
+    if not isinstance(triage, dict) or not isinstance(triage.get("enabled"), bool):
+        raise WorkflowError("Invalid project_conventions triage settings")
+    if triage["enabled"]:
+        references.append(triage.get("doc"))
+    agent_file = conventions.get("agent_file")
+    if agent_file not in {"AGENTS.md", "CLAUDE.md"}:
+        raise WorkflowError("Invalid project_conventions agent_file")
+    references.append(agent_file)
+    integrity = conventions.get("integrity")
+    if not isinstance(integrity, dict) or not isinstance(integrity.get("documents"), dict):
+        raise WorkflowError("Invalid project_conventions integrity metadata")
+    for reference in references:
+        if not isinstance(reference, str) or not reference.strip():
+            raise WorkflowError("Invalid project_conventions document reference")
+        repository_ref(repo, reference)
+    for reference in references[:-1]:
+        expected = integrity["documents"].get(reference)
+        if not isinstance(expected, str):
+            raise WorkflowError(f"Missing integrity hash for {reference}")
+        _, path = repository_ref(repo, reference)
+        if text_sha256(path.read_text(encoding="utf-8-sig")) != expected:
+            raise WorkflowError(f"Project convention changed; rerun setup: {reference}")
+    _, agent_path = repository_ref(repo, agent_file)
+    agent_content = agent_path.read_text(encoding="utf-8-sig")
+    if (
+        agent_content.count(MANAGED_AGENT_START) != 1
+        or agent_content.count(MANAGED_AGENT_END) != 1
+    ):
+        raise WorkflowError("Managed project-conventions block is missing or malformed")
+    start = agent_content.index(MANAGED_AGENT_START)
+    end_start = agent_content.index(MANAGED_AGENT_END)
+    if end_start <= start:
+        raise WorkflowError("Managed project-conventions markers are reversed")
+    block = agent_content[start : end_start + len(MANAGED_AGENT_END)]
+    if text_sha256(block) != integrity.get("agent_block_sha256"):
+        raise WorkflowError("Managed project-conventions block changed; rerun setup")
+
+
 def cognitive_routing(args: argparse.Namespace) -> dict[str, list[str]]:
     return {
         "skills": normalized_strings(getattr(args, "skill", None)),
@@ -761,6 +1204,18 @@ def cmd_start(args: argparse.Namespace) -> int:
         return 0
     repo = repo_root()
     _, config = load_config(repo)
+    validate_project_conventions(repo, config)
+    if "rh-company-workflow" in normalized_strings(args.skill):
+        conventions = config["project_conventions"]
+        tracker = conventions["tracker"]
+        if (
+            conventions.get("profile") != "private"
+            or tracker.get("kind") != "local"
+            or tracker.get("publication_policy") != "forbidden"
+        ):
+            raise WorkflowError(
+                "RH tasks require private project conventions with local forbidden publication"
+            )
     classes = config.get("workflow_classes", {})
     settings = config.get("codex_workflow", {})
     workflow_class = args.workflow_class or settings.get("default_class")
@@ -1238,6 +1693,19 @@ def parser() -> argparse.ArgumentParser:
         help="Print the detected configuration without writing workflow/config.json.",
     )
     init.set_defaults(func=cmd_init)
+
+    setup = commands.add_parser("setup")
+    setup.add_argument("--profile", choices=["standard", "private"], default="standard")
+    setup.add_argument("--tracker", choices=["local", "github", "gitlab", "other"], default="local")
+    setup.add_argument("--tracker-url")
+    setup.add_argument("--tracker-instructions")
+    setup.add_argument("--publication-policy", choices=["explicit", "forbidden"], default="explicit")
+    setup.add_argument("--domain-layout", choices=["single", "multi"], default="single")
+    setup.add_argument("--with-triage", action="store_true")
+    setup.add_argument("--triage-label", action="append", default=[])
+    setup.add_argument("--agent-file", choices=["AGENTS.md", "CLAUDE.md"])
+    setup.add_argument("--dry-run", action="store_true")
+    setup.set_defaults(func=cmd_setup)
 
     doctor = commands.add_parser("doctor")
     doctor.set_defaults(func=cmd_doctor)

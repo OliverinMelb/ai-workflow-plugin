@@ -58,6 +58,12 @@ only `workflow/config.json`, refuses to overwrite an existing configuration, and
 `doctor`. It never reads `.env` values. Use `init --dry-run` to inspect the generated JSON without
 writing.
 
+Before starting a non-micro task, also require `project_conventions` in `workflow/config.json`.
+When it is absent, use `$workflow-init` to inspect, preview, and configure tracker, publication,
+domain-doc, triage, and agent-file conventions. This is a one-time repository setup. Workflow
+planning remains local; a remote tracker with publication policy `explicit` still requires
+separate user authorization for every publish action.
+
 Start every non-micro workflow with `doctor`.
 
 ## Route the task
