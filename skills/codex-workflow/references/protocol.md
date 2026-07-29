@@ -13,6 +13,13 @@ BLOCKED -> PLAN | EXECUTE | FIX
 
 `verify` moves passing work to `REVIEW` and failing work to `FIX`. `review --verdict fix` consumes one fix-loop allowance. `review --verdict pass` moves fresh verified work to `INTEGRATE`. `close` requires fresh passing evidence while in `INTEGRATE`.
 
+## Cognitive gate
+
+Before `PLAN -> EXECUTE`, resolve product decisions, missing facts, runnable design questions, and
+bug reproduction using `references/cognitive-routing.md`. Record selected disciplines, source
+artifacts, and short routing notes in the task packet. Cognitive skills inform the workflow; they
+do not own task state, delegation, worktrees, integration, or closure.
+
 ## Ownership
 
 Record explicit `owned_paths` for every write-capable task. A path owns itself and descendants. Changes outside owned paths fail verification unless they are unchanged pre-existing dirty files recorded at task start.
@@ -29,6 +36,10 @@ Use the current Codex-managed worktree as the task workspace. Do not create one 
 ## Delegation
 
 Delegate read-heavy exploration, test analysis, or independent review. Keep ambiguous scope decisions and integration in the main thread.
+
+The configured `max_subagents` is a hard cap on the tier allowance. A cognitive skill cannot
+override it. Use one write-capable implementer at a time; reserve any additional allowance for
+read-only exploration or review.
 
 Give each subagent:
 

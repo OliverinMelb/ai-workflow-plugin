@@ -38,6 +38,9 @@ Add this optional block for Codex routing:
 
 Keep model names out of project workflow configuration. Configure role models in Codex custom-agent TOML files.
 
+`max_subagents` is a hard project cap. The task receives the lower of this value and its tier
+allowance. Set it to `0` to keep all work in the main thread.
+
 ## Checks
 
 ```json

@@ -1,4 +1,4 @@
 interface:
   display_name: "Codex Workflow"
-  short_description: "Plan, verify, review, and close Codex coding tasks"
-  default_prompt: "Use $codex-workflow to run this coding task with bounded agents and independent verification."
+  short_description: "Route, execute, verify, and close coding tasks safely"
+  default_prompt: "Use $codex-workflow to route and run this coding task with bounded agents and deterministic verification."

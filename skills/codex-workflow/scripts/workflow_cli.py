@@ -464,6 +464,18 @@ def slugify(value: str) -> str:
     return (slug or "task")[:36]
 
 
+def normalized_strings(values: list[str] | None) -> list[str]:
+    return sorted({value.strip() for value in (values or []) if value.strip()})
+
+
+def cognitive_routing(args: argparse.Namespace) -> dict[str, list[str]]:
+    return {
+        "skills": normalized_strings(getattr(args, "skill", None)),
+        "source_refs": normalized_strings(getattr(args, "source_ref", None)),
+        "notes": normalized_strings(getattr(args, "routing_note", None)),
+    }
+
+
 def path_owned(path: str, owned_paths: list[str]) -> bool:
     normalized = path.strip("/").replace("\\", "/")
     for owner in owned_paths:
@@ -616,7 +628,10 @@ def cmd_start(args: argparse.Namespace) -> int:
         raise WorkflowError(f"Task already exists: {task_id}")
     workspace = workspace_info(repo)
     max_loops = args.max_fix_loops if args.max_fix_loops is not None else int(settings.get("max_fix_loops", 2))
-    max_agents = {"small": 1, "medium": 2, "contract": 2}[args.tier]
+    tier_agent_limit = {"small": 1, "medium": 2, "contract": 2}[args.tier]
+    configured_agent_limit = max(0, int(settings.get("max_subagents", tier_agent_limit)))
+    max_agents = min(tier_agent_limit, configured_agent_limit)
+    routing = cognitive_routing(args)
     task = {
         "schema_version": 1,
         "engine_version": ENGINE_VERSION,
@@ -629,6 +644,7 @@ def cmd_start(args: argparse.Namespace) -> int:
         "updated_at": now(),
         "workspace": {**workspace, "base_sha": workspace["head_sha"]},
         "scope": {"owned_paths": sorted(set(args.owned_path or []))},
+        "cognitive_routing": routing,
         "budget": {
             "max_subagents": max_agents,
             "max_fix_loops": max_loops,
@@ -649,6 +665,10 @@ def cmd_start(args: argparse.Namespace) -> int:
         f"- base_sha: `{workspace['head_sha']}`\n"
         f"- workspace: `{workspace['kind']}`\n"
         f"- owned_paths: {', '.join(args.owned_path or []) or '(not yet constrained)'}\n\n"
+        "## Cognitive routing\n\n"
+        f"- skills: {', '.join(routing['skills']) or 'direct'}\n"
+        f"- source_refs: {', '.join(routing['source_refs']) or 'none'}\n"
+        f"- notes: {'; '.join(routing['notes']) or 'none'}\n\n"
         "## Acceptance criteria\n\n- [ ] Define before implementation.\n\n"
         "## Plan\n\n- [ ] Define bounded implementation slices.\n",
         encoding="utf-8",
@@ -670,6 +690,31 @@ def cmd_transition(args: argparse.Namespace) -> int:
     transition(task, args.to)
     save_task(repo, task, "TRANSITION", {"to": args.to, "note": args.note})
     print(f"task_id={args.task_id}\nstate={task['state']}")
+    return 0
+
+
+def cmd_route(args: argparse.Namespace) -> int:
+    repo = repo_root()
+    task = load_task(repo, args.task_id)
+    if task["state"] not in {"PLAN", "BLOCKED"}:
+        raise WorkflowError(
+            f"Cognitive routing is only allowed in PLAN or BLOCKED, found {task['state']}"
+        )
+    additions = cognitive_routing(args)
+    if not any(additions.values()):
+        raise WorkflowError("Provide at least one --skill, --source-ref, or --routing-note")
+    current = task.setdefault(
+        "cognitive_routing",
+        {"skills": [], "source_refs": [], "notes": []},
+    )
+    for key, values in additions.items():
+        current[key] = normalized_strings([*current.get(key, []), *values])
+    save_task(repo, task, "COGNITIVE_ROUTE", additions)
+    print(
+        f"task_id={task['task_id']}\n"
+        f"state={task['state']}\n"
+        f"skills={','.join(current['skills']) or 'direct'}"
+    )
     return 0
 
 
@@ -957,7 +1002,17 @@ def parser() -> argparse.ArgumentParser:
     start.add_argument("--owned-path", action="append", default=[])
     start.add_argument("--task-id")
     start.add_argument("--max-fix-loops", type=int)
+    start.add_argument("--skill", action="append", default=[])
+    start.add_argument("--source-ref", action="append", default=[])
+    start.add_argument("--routing-note", action="append", default=[])
     start.set_defaults(func=cmd_start)
+
+    route = commands.add_parser("route")
+    route.add_argument("task_id")
+    route.add_argument("--skill", action="append", default=[])
+    route.add_argument("--source-ref", action="append", default=[])
+    route.add_argument("--routing-note", action="append", default=[])
+    route.set_defaults(func=cmd_route)
 
     state = commands.add_parser("transition")
     state.add_argument("task_id")

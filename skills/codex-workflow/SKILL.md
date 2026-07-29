@@ -1,11 +1,30 @@
 ---
 name: codex-workflow
-description: Run a bounded Codex coding workflow with task sizing, native-worktree awareness, limited subagent delegation, deterministic environment diagnosis, independent verification, finite review/fix loops, and auditable task closure. Use when the user asks to plan, implement, verify, review, resume, or close non-trivial repository work using the workflow protocol, or when a repository contains workflow/config.json.
+description: Route, plan, implement, verify, review, resume, or close bounded repository work with cognitive-skill selection, native-worktree awareness, controlled subagent delegation, deterministic checks, finite fix loops, and auditable task evidence. Use for non-trivial coding work, hard bugs, design questions that may need research or a prototype, or whenever a repository contains workflow/config.json.
 ---
 
 # Codex Workflow
 
 Keep the main thread responsible for scope, decisions, integration, and final verification. Use scripts for repeatable checks and use subagents only when their work is independent and bounded.
+
+## Cognitive routing
+
+Before creating a task packet, classify what is missing:
+
+- unresolved user decisions -> use `grilling`; add `domain-modeling` when domain language or a durable decision is involved;
+- missing public facts -> use `research`;
+- a runnable state, logic, or UI question -> use `prototype`;
+- a hard bug without a tight reproduction -> use `diagnosing-bugs`;
+- clear, bounded implementation -> start the workflow directly.
+
+During execution, use `tdd` for behavior changes and `codebase-design` for interface or seam decisions.
+After deterministic verification, use `code-review` for separate Standards and Spec judgments.
+
+These are model-invoked disciplines. Do not implicitly invoke Matt's user-invoked orchestrators
+such as `grill-with-docs`, `to-spec`, `to-tickets`, or `wayfinder`; recommend them when appropriate
+and continue only after the user invokes them. Read
+[references/cognitive-routing.md](references/cognitive-routing.md) for routing, delegation, and
+fallback rules.
 
 ## Command
 
@@ -54,13 +73,19 @@ Never create a nested worktree when Codex already placed the chat in one. Use an
 3. Start:
 
    ```powershell
-   workflow.ps1 start --title "<task>" --tier medium --workflow-class <class> --owned-path <path>
+   workflow.ps1 start --title "<task>" --tier medium --workflow-class <class> --owned-path <path> --skill <discipline> --source-ref <issue-or-spec>
    ```
 
 4. Complete the plan, record acceptance criteria in the generated `brief.md`, then:
 
    ```powershell
    workflow.ps1 transition <task-id> --to EXECUTE
+   ```
+
+   If routing changes while still in PLAN or BLOCKED, record it:
+
+   ```powershell
+   workflow.ps1 route <task-id> --skill research --source-ref <artifact> --routing-note "<why>"
    ```
 
 5. Implement within owned paths. Do not require a commit before verification.

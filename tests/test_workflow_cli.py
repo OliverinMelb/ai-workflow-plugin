@@ -27,6 +27,7 @@ class WorkflowCliTest(unittest.TestCase):
                 "version": 1,
                 "default_class": "app-change",
                 "max_fix_loops": 2,
+                "max_subagents": 0,
                 "check_timeout_seconds": 30,
             },
             "checks": {
@@ -68,6 +69,121 @@ class WorkflowCliTest(unittest.TestCase):
         result = self.workflow("start", "--title", "typo", "--tier", "micro")
         self.assertIn("packet=skipped", result.stdout)
         self.assertFalse((self.repo / "workflow" / "tasks").exists())
+
+    def test_agent_cap_and_cognitive_routing_are_auditable(self) -> None:
+        self.workflow(
+            "start",
+            "--title",
+            "routed change",
+            "--tier",
+            "medium",
+            "--owned-path",
+            "app.txt",
+            "--task-id",
+            "task-route",
+            "--skill",
+            "diagnosing-bugs",
+            "--source-ref",
+            "issue:42",
+            "--routing-note",
+            "Reproduction established before implementation.",
+        )
+        task_path = self.repo / "workflow" / "tasks" / "task-route" / "task.json"
+        task = json.loads(task_path.read_text(encoding="utf-8"))
+        self.assertEqual(task["budget"]["max_subagents"], 0)
+        self.assertEqual(task["cognitive_routing"]["skills"], ["diagnosing-bugs"])
+        self.assertEqual(task["cognitive_routing"]["source_refs"], ["issue:42"])
+
+        self.workflow(
+            "route",
+            "task-route",
+            "--skill",
+            "research",
+            "--source-ref",
+            "research/api-contract.md",
+        )
+        task = json.loads(task_path.read_text(encoding="utf-8"))
+        self.assertEqual(
+            task["cognitive_routing"]["skills"],
+            ["diagnosing-bugs", "research"],
+        )
+        self.assertEqual(
+            task["cognitive_routing"]["source_refs"],
+            ["issue:42", "research/api-contract.md"],
+        )
+        self.assertEqual(task["history"][-1]["event"], "COGNITIVE_ROUTE")
+        brief = task_path.with_name("brief.md").read_text(encoding="utf-8")
+        self.assertIn("## Cognitive routing", brief)
+        self.assertIn("diagnosing-bugs", brief)
+
+    def test_agent_limit_defaults_to_tier_and_cannot_exceed_it(self) -> None:
+        config_path = self.repo / "workflow" / "config.json"
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+        config["codex_workflow"].pop("max_subagents")
+        config_path.write_text(json.dumps(config), encoding="utf-8")
+        self.workflow(
+            "start",
+            "--title",
+            "default agent limit",
+            "--tier",
+            "medium",
+            "--task-id",
+            "task-default-agents",
+        )
+        default_task = json.loads(
+            (
+                self.repo
+                / "workflow"
+                / "tasks"
+                / "task-default-agents"
+                / "task.json"
+            ).read_text(encoding="utf-8")
+        )
+        self.assertEqual(default_task["budget"]["max_subagents"], 2)
+
+        config["codex_workflow"]["max_subagents"] = 99
+        config_path.write_text(json.dumps(config), encoding="utf-8")
+        self.workflow(
+            "start",
+            "--title",
+            "tier capped agents",
+            "--tier",
+            "small",
+            "--task-id",
+            "task-tier-agents",
+        )
+        capped_task = json.loads(
+            (
+                self.repo
+                / "workflow"
+                / "tasks"
+                / "task-tier-agents"
+                / "task.json"
+            ).read_text(encoding="utf-8")
+        )
+        self.assertEqual(capped_task["budget"]["max_subagents"], 1)
+
+    def test_route_rejects_empty_or_post_plan_updates(self) -> None:
+        self.workflow(
+            "start",
+            "--title",
+            "route guards",
+            "--tier",
+            "small",
+            "--task-id",
+            "task-route-guards",
+        )
+        empty = self.workflow("route", "task-route-guards", expected=2)
+        self.assertIn("Provide at least one", empty.stdout)
+        self.workflow("transition", "task-route-guards", "--to", "EXECUTE")
+        late = self.workflow(
+            "route",
+            "task-route-guards",
+            "--skill",
+            "research",
+            expected=2,
+        )
+        self.assertIn("only allowed in PLAN or BLOCKED", late.stdout)
 
     def test_verify_review_and_close_with_preexisting_dirty_file(self) -> None:
         (self.repo / "user-note.txt").write_text("do not own\n", encoding="utf-8")
