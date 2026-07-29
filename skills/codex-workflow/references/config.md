@@ -77,7 +77,6 @@ Add this optional block for Codex routing:
     "default_tier": "small",
     "default_class": "app-change",
     "max_fix_loops": 2,
-    "max_subagents": 2,
     "check_timeout_seconds": 900,
     "global_memory_dir": "C:/Users/admin/.agents/workflow-memory"
   }
@@ -86,8 +85,9 @@ Add this optional block for Codex routing:
 
 Keep model names out of project workflow configuration. Configure role models in Codex custom-agent TOML files.
 
-`max_subagents` is a hard project cap. The task receives the lower of this value and its tier
-allowance. Set it to `0` to keep all work in the main thread.
+The workflow does not configure a subagent count limit; runtime capacity controls concurrency.
+Legacy `max_subagents` values are accepted for compatibility but ignored. Parallel writers still
+require explicitly assigned dedicated linked worktrees and disjoint owned paths.
 
 ## Checks
 

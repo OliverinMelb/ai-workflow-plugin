@@ -30,12 +30,13 @@ invocation when the work needs it.
 ## Delegation and worktrees
 
 The workflow, not a cognitive skill, decides whether to create a subagent. Cognitive skills may
-request research, implementation, or review, but the configured agent budget and owned paths win.
-Subagents must not spawn subagents.
+request research, implementation, or review, but runtime capacity, owned paths, and write
+isolation win. The main thread remains responsible for recursive delegation and integration.
 
-Reuse the current Codex-managed worktree. Read-only explorers and reviewers share it. Use at most
-one write-capable implementer by default. Create another worktree only for an explicitly independent
-parallel write stream with disjoint owned paths and a declared integration order.
+Read-only explorers and reviewers may share the current Codex-managed worktree. A sole writer may
+also use it. Each additional concurrent writer requires a dedicated linked worktree, disjoint
+owned paths, a recorded base SHA, and a declared integration order. Agent spawning alone does not
+provide this isolation; if the worktrees are not explicitly assigned, keep writers sequential.
 
 ## Audit
 

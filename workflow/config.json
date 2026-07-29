@@ -13,7 +13,6 @@
     "default_tier": "small",
     "default_class": "plugin-change",
     "max_fix_loops": 2,
-    "max_subagents": 1,
     "check_timeout_seconds": 120
   },
   "checks": {

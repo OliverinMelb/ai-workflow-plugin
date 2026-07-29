@@ -31,8 +31,9 @@ workflows. Never change their invocation metadata as a side effect of using this
 ## Ticket execution
 
 Treat each unblocked ticket as a fresh bounded implementation packet. Preserve the shared spec and
-decisions, but avoid carrying speculative conversation history. Prefer one write-capable agent at
-a time unless tickets are genuinely independent and own disjoint paths.
+decisions, but avoid carrying speculative conversation history. Parallelize genuinely independent
+tickets within runtime capacity. Each concurrent writer must own disjoint paths and receive a
+dedicated linked worktree, base SHA, and explicit integration order before it starts.
 
 Ticket publication is separate from ticket creation. Local task artifacts are authorized by the
 workflow invocation; creating or modifying GitHub, Linear, Jira, or another external tracker

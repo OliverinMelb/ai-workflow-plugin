@@ -68,12 +68,17 @@ Start every non-micro workflow with `doctor`.
 
 ## Route the task
 
-- `micro`: one small docs, copy, style, or config edit with no behavior or contract change. Do not create a task packet or subagent.
-- `small`: one component and no contract change. Create a task; use zero or one subagent only when exploration materially helps.
-- `medium`: multiple files or meaningful behavior. Create a task; prefer one implementer and let the main thread independently verify.
-- `contract`: API, schema, environment semantics, security boundary, trading behavior, or cross-component change. Create a task; use full verification and one read-only reviewer.
+- `micro`: one small docs, copy, style, or config edit with no behavior or contract change. Skip the task packet; delegate only when a bounded subtask materially helps.
+- `small`: one component and no contract change. Create a task and delegate independent bounded work when useful.
+- `medium`: multiple files or meaningful behavior. Create a task; parallelize independent exploration or implementation slices and let the main thread independently verify.
+- `contract`: API, schema, environment semantics, security boundary, trading behavior, or cross-component change. Create a task; use full verification and independent review.
 
-Never create a nested worktree when Codex already placed the chat in one. Use another worktree only for an independent parallel write stream with disjoint owned paths. Keep dependent slices sequential in the same workspace.
+Never assume that spawning a subagent creates filesystem isolation. Read-only agents may share the
+current task worktree. A sole write-capable agent may use it too. Before running multiple
+write-capable agents concurrently, the main thread must assign each one a dedicated linked
+worktree, disjoint owned paths, a base SHA, and an explicit integration order. Create sibling
+worktrees rather than nesting them. If that isolation cannot be established, keep the write
+streams sequential.
 
 ## Run the state machine
 
@@ -94,6 +99,17 @@ Never create a nested worktree when Codex already placed the chat in one. Use an
    ```powershell
    workflow.ps1 start --title "<task>" --tier medium --workflow-class <class> --owned-path <path> --skill <discipline> --source-ref <issue-or-spec>
    ```
+
+   Before spawning each concurrent write-capable agent, create its dedicated linked worktree with
+   the native Codex facility when available, then validate and register the assignment:
+
+   ```powershell
+   workflow.ps1 assign-writer <task-id> --writer-id <id> --worktree-path <absolute-path> --owned-path <path> --integration-order <number>
+   ```
+
+   The command refuses a main checkout, a worktree from another repository, a dirty or stale
+   worktree, overlapping owned paths, or duplicate integration order. Agent spawning itself does
+   not call this command or create the worktree automatically.
 
 4. Complete the auditable plan. Record open questions as soon as they are found:
 
@@ -164,14 +180,16 @@ Never create a nested worktree when Codex already placed the chat in one. Use an
 
 Read [references/protocol.md](references/protocol.md) when deciding delegation, ownership, review, or recovery. Read [references/config.md](references/config.md) when creating or changing `workflow/config.json`.
 
-## Agent budget
+## Delegation and write isolation
 
-- Micro: 0 subagents.
-- Small: at most 1.
-- Medium: at most 1 active implementer; optional read-only explorer first.
-- Contract: at most 1 implementer and 1 reviewer.
-- Maximum review/fix loops: 2 by default.
-- Do not let workflow subagents spawn more subagents.
+- The workflow does not impose a subagent count limit. Use the runtime's available capacity.
+- Delegate only independent, bounded outcomes with explicit ownership and acceptance criteria.
+- Read-only explorers and reviewers may share the current task worktree.
+- Every concurrently active write-capable agent must have its own dedicated linked worktree.
+- Record each writer's absolute worktree path, branch or detached state, base SHA, owned paths, and integration order before spawning it.
+- If dedicated worktrees are unavailable or ownership overlaps, serialize the writers.
+- Maximum review/fix loops remain 2 by default.
+- Keep recursive delegation under the main thread's authority so worktree ownership remains auditable.
 
 Use `workflow-explorer` for read-only scans, `workflow-implementer` for a bounded write scope, and `workflow-reviewer` for independent read-only review when those custom agents are available.
 

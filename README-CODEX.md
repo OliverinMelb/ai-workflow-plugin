@@ -2,14 +2,15 @@
 
 这是 `ai-workflow` 的 Codex 原生 Windows 分支。它保留项目已有的
 `workflow/config.json` 检查矩阵，同时将 Claude slash command 编排替换为
-Codex skill、有限状态机、可复验的证据和受限 custom agents。
+Codex skill、有限状态机、可复验的证据和显式隔离的 custom agents。
 
 ## 核心行为
 
 - 状态机：`PLAN → EXECUTE → VERIFY → REVIEW → INTEGRATE → CLOSED`
 - 失败进入 `FIX`；默认最多两轮，超限进入 `BLOCKED`
-- `micro` 任务不创建任务包，也不使用子代理
-- 自动识别当前 checkout/worktree，禁止嵌套 worktree
+- `micro` 任务不创建任务包；workflow 不设置子代理数量上限
+- 自动识别当前 checkout/worktree；并行写入代理必须显式分配独立 linked worktree
+- `assign-writer` 验证并记录每个写入代理的 worktree、base SHA、owned paths 与集成顺序
 - 验证绑定 Git HEAD、工作区指纹和配置哈希
 - 任务开始前已有的脏文件不会被归因给当前任务
 - 工作流自身的任务包和证据不会污染源码范围检查
@@ -75,14 +76,14 @@ workflow.ps1 init --dry-run
     "default_tier": "small",
     "default_class": "app-change",
     "max_fix_loops": 2,
-    "max_subagents": 2,
     "check_timeout_seconds": 900,
     "global_memory_dir": "C:/Users/<user>/.agents/workflow-memory"
   }
 }
 ```
 
-`default_class` 必须对应 `workflow_classes` 中的键。机器路径、代理端口和密钥
+`default_class` 必须对应 `workflow_classes` 中的键。旧配置中的 `max_subagents`
+仍可读取但会被忽略；并发数量由运行时决定。机器路径、代理端口和密钥
 不得写死在公共配置中。
 
 ## 本地验证

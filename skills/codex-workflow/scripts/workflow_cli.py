@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-ENGINE_VERSION = "1.2.0"
+ENGINE_VERSION = "1.3.0"
 ACTIVE_STATES = {"PLAN", "EXECUTE", "VERIFY", "REVIEW", "FIX", "INTEGRATE", "BLOCKED"}
 ALLOWED = {
     "PLAN": {"EXECUTE", "BLOCKED"},
@@ -329,7 +329,6 @@ def generated_config(repo: Path, project_name: str | None = None) -> tuple[dict[
             "default_tier": "small",
             "default_class": "app-change",
             "max_fix_loops": 2,
-            "max_subagents": 1,
             "check_timeout_seconds": 900,
         },
         "components": components,
@@ -797,6 +796,12 @@ def workspace_info(repo: Path, ignore_prefixes: list[str] | None = None) -> dict
     }
 
 
+def common_git_dir(repo: Path) -> Path:
+    value = git(repo, "rev-parse", "--git-common-dir")
+    path = Path(value)
+    return (path if path.is_absolute() else repo / path).resolve()
+
+
 def atomic_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_suffix(path.suffix + ".tmp")
@@ -1066,10 +1071,43 @@ def cognitive_routing(args: argparse.Namespace) -> dict[str, list[str]]:
     }
 
 
+def canonical_owned_path(value: str) -> str:
+    normalized = value.strip().replace("\\", "/")
+    if (
+        not normalized
+        or normalized.startswith("/")
+        or re.match(r"^[A-Za-z]:($|/)", normalized)
+    ):
+        raise WorkflowError(f"Owned path must be repository-relative: {value}")
+    parts = normalized.split("/")
+    if ".." in parts:
+        raise WorkflowError(f"Owned path must not contain '..': {value}")
+    normalized = "/".join(part for part in parts if part not in {"", "."})
+    if not normalized:
+        raise WorkflowError(f"Owned path must name a repository path: {value}")
+    return normalized
+
+
+def owned_path_key(value: str) -> str:
+    return value.casefold() if os.name == "nt" else value
+
+
+def normalize_owned_paths(values: list[str] | None) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for raw in normalized_strings(values):
+        path = canonical_owned_path(raw)
+        key = owned_path_key(path)
+        if key not in seen:
+            seen.add(key)
+            result.append(path)
+    return sorted(result, key=owned_path_key)
+
+
 def path_owned(path: str, owned_paths: list[str]) -> bool:
-    normalized = path.strip("/").replace("\\", "/")
-    for owner in owned_paths:
-        candidate = owner.strip("/").replace("\\", "/")
+    normalized = owned_path_key(canonical_owned_path(path))
+    for owner in normalize_owned_paths(owned_paths):
+        candidate = owned_path_key(owner)
         if normalized == candidate or normalized.startswith(candidate + "/"):
             return True
     return False
@@ -1200,7 +1238,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
 def cmd_start(args: argparse.Namespace) -> int:
     if args.tier == "micro":
-        print("tier=micro\npacket=skipped\nsubagents=0")
+        print("tier=micro\npacket=skipped\nsubagent_limit=runtime")
         return 0
     repo = repo_root()
     _, config = load_config(repo)
@@ -1228,11 +1266,9 @@ def cmd_start(args: argparse.Namespace) -> int:
     path = task_path(repo, task_id)
     if path.exists():
         raise WorkflowError(f"Task already exists: {task_id}")
+    owned_paths = normalize_owned_paths(args.owned_path)
     workspace = workspace_info(repo)
     max_loops = args.max_fix_loops if args.max_fix_loops is not None else int(settings.get("max_fix_loops", 2))
-    tier_agent_limit = {"small": 1, "medium": 2, "contract": 2}[args.tier]
-    configured_agent_limit = max(0, int(settings.get("max_subagents", tier_agent_limit)))
-    max_agents = min(tier_agent_limit, configured_agent_limit)
     routing = cognitive_routing(args)
     task = {
         "schema_version": 2,
@@ -1245,11 +1281,15 @@ def cmd_start(args: argparse.Namespace) -> int:
         "created_at": now(),
         "updated_at": now(),
         "workspace": {**workspace, "base_sha": workspace["head_sha"]},
-        "scope": {"owned_paths": sorted(set(args.owned_path or []))},
+        "scope": {"owned_paths": owned_paths},
         "cognitive_routing": routing,
+        "delegation": {
+            "subagent_limit": "runtime",
+            "parallel_write_isolation": "dedicated-worktree",
+            "writers": [],
+        },
         "planning": planning_state(),
         "budget": {
-            "max_subagents": max_agents,
             "max_fix_loops": max_loops,
             "fix_loops": 0,
             "verification_attempts": 0,
@@ -1267,7 +1307,10 @@ def cmd_start(args: argparse.Namespace) -> int:
         f"- workflow_class: `{workflow_class}`\n"
         f"- base_sha: `{workspace['head_sha']}`\n"
         f"- workspace: `{workspace['kind']}`\n"
-        f"- owned_paths: {', '.join(args.owned_path or []) or '(not yet constrained)'}\n\n"
+        f"- owned_paths: {', '.join(owned_paths) or '(not yet constrained)'}\n\n"
+        "## Delegation\n\n"
+        "- subagent_limit: runtime\n"
+        "- parallel_write_isolation: dedicated-worktree\n\n"
         "## Cognitive routing\n\n"
         f"- skills: {', '.join(routing['skills']) or 'direct'}\n"
         f"- source_refs: {', '.join(routing['source_refs']) or 'none'}\n"
@@ -1277,7 +1320,110 @@ def cmd_start(args: argparse.Namespace) -> int:
         encoding="utf-8",
     )
     write_planning_artifact(repo, task)
-    print(f"task_id={task_id}\nstate=PLAN\npath={task_dir(repo, task_id)}")
+    print(
+        f"task_id={task_id}\n"
+        "state=PLAN\n"
+        "subagent_limit=runtime\n"
+        "parallel_write_isolation=dedicated-worktree\n"
+        f"path={task_dir(repo, task_id)}"
+    )
+    return 0
+
+
+def paths_overlap(left: str, right: str) -> bool:
+    return path_owned(left, [right]) or path_owned(right, [left])
+
+
+def cmd_assign_writer(args: argparse.Namespace) -> int:
+    repo = repo_root()
+    task = load_task(repo, args.task_id)
+    if task["state"] not in {"PLAN", "EXECUTE", "FIX"}:
+        raise WorkflowError("Writer assignment is only allowed in PLAN, EXECUTE, or FIX")
+
+    writer_id = args.writer_id.strip()
+    if not writer_id:
+        raise WorkflowError("--writer-id must not be empty")
+    if args.integration_order < 1:
+        raise WorkflowError("--integration-order must be a positive integer")
+    raw_worktree = Path(args.worktree_path)
+    if not raw_worktree.is_absolute():
+        raise WorkflowError("--worktree-path must be absolute")
+    worktree = raw_worktree.resolve()
+    if not worktree.is_dir():
+        raise WorkflowError(f"Writer worktree does not exist: {worktree}")
+    top_level = Path(git(worktree, "rev-parse", "--show-toplevel")).resolve()
+    if top_level != worktree:
+        raise WorkflowError("--worktree-path must point to the linked worktree root")
+    if common_git_dir(worktree) != common_git_dir(repo):
+        raise WorkflowError("Writer worktree must belong to the task repository")
+
+    workspace = workspace_info(worktree)
+    if workspace["kind"] != "linked-worktree":
+        raise WorkflowError("Parallel writers require a dedicated linked worktree")
+    integration = repo.resolve()
+    if (
+        worktree == integration
+        or integration in worktree.parents
+        or worktree in integration.parents
+    ):
+        raise WorkflowError(
+            "Writer worktree must be a sibling of the integration workspace"
+        )
+    if workspace["dirty_entries"]:
+        raise WorkflowError("Writer worktree must be clean when assigned")
+    if workspace["head_sha"] != task["workspace"]["base_sha"]:
+        raise WorkflowError(
+            "Writer worktree HEAD must match the task base SHA before assignment"
+        )
+
+    owned_paths = normalize_owned_paths(args.owned_path)
+    if not owned_paths:
+        raise WorkflowError("Assign at least one --owned-path to the writer")
+    task_owned = normalize_owned_paths(task.get("scope", {}).get("owned_paths", []))
+    if not task_owned:
+        raise WorkflowError("Task owned_paths must be defined before assigning writers")
+    outside = [path for path in owned_paths if not path_owned(path, task_owned)]
+    if outside:
+        raise WorkflowError(
+            "Writer owned paths fall outside task scope: " + ", ".join(outside)
+        )
+
+    writers = task.setdefault("delegation", {}).setdefault("writers", [])
+    for existing in writers:
+        if existing["writer_id"] == writer_id:
+            raise WorkflowError(f"Writer id is already assigned: {writer_id}")
+        if Path(existing["worktree_path"]).resolve() == worktree:
+            raise WorkflowError(f"Worktree is already assigned to {existing['writer_id']}")
+        if existing["integration_order"] == args.integration_order:
+            raise WorkflowError(
+                f"Integration order is already assigned to {existing['writer_id']}"
+            )
+        for candidate in owned_paths:
+            for assigned in existing["owned_paths"]:
+                if paths_overlap(candidate, assigned):
+                    raise WorkflowError(
+                        f"Writer owned path overlap: {candidate} and {assigned}"
+                    )
+
+    writer = {
+        "writer_id": writer_id,
+        "worktree_path": str(worktree),
+        "workspace_kind": workspace["kind"],
+        "branch": workspace["branch"],
+        "detached": workspace["detached"],
+        "base_sha": workspace["head_sha"],
+        "owned_paths": owned_paths,
+        "integration_order": args.integration_order,
+    }
+    writers.append(writer)
+    writers.sort(key=lambda item: (item["integration_order"], item["writer_id"]))
+    save_task(repo, task, "WRITER_ASSIGNED", writer)
+    print(
+        f"task_id={task['task_id']}\n"
+        f"writer_id={writer_id}\n"
+        f"worktree={worktree}\n"
+        f"integration_order={args.integration_order}"
+    )
     return 0
 
 
@@ -1728,6 +1874,14 @@ def parser() -> argparse.ArgumentParser:
     route.add_argument("--source-ref", action="append", default=[])
     route.add_argument("--routing-note", action="append", default=[])
     route.set_defaults(func=cmd_route)
+
+    writer = commands.add_parser("assign-writer")
+    writer.add_argument("task_id")
+    writer.add_argument("--writer-id", required=True)
+    writer.add_argument("--worktree-path", required=True)
+    writer.add_argument("--owned-path", action="append", default=[])
+    writer.add_argument("--integration-order", type=int, required=True)
+    writer.set_defaults(func=cmd_assign_writer)
 
     plan = commands.add_parser("plan")
     plan.add_argument("task_id")

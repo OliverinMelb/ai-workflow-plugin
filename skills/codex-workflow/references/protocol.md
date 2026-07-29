@@ -41,15 +41,29 @@ Parallel write streams are allowed only when:
 - shared contracts are unchanged or assigned to one owner;
 - integration order is explicit.
 
-Use the current Codex-managed worktree as the task workspace. Do not create one worktree per subtask by default.
+Use the current Codex-managed worktree as the integration workspace. Read-only agents and a sole
+write-capable agent may share it. Before multiple write-capable agents run concurrently, the main
+thread must create or assign a dedicated linked worktree to each writer. Never assume agent spawn
+provides worktree isolation.
 
 ## Delegation
 
 Delegate read-heavy exploration, test analysis, or independent review. Keep ambiguous scope decisions and integration in the main thread.
 
-The configured `max_subagents` is a hard cap on the tier allowance. A cognitive skill cannot
-override it. Use one write-capable implementer at a time; reserve any additional allowance for
-read-only exploration or review.
+The workflow does not impose a subagent count limit; concurrency is governed by runtime capacity
+and whether useful work can be split into independent bounded outcomes. Legacy
+`codex_workflow.max_subagents` configuration is accepted but ignored.
+
+Read-only agents may share the integration worktree. For every concurrent write-capable agent,
+record an absolute worktree path, branch or detached state, base SHA, disjoint `owned_paths`, and
+integration order before spawning it. The assigned prompt must require all commands and writes to
+stay in that worktree. If isolation cannot be established or ownership overlaps, serialize those
+writers.
+
+Use `workflow.ps1 assign-writer` to validate and store each writer assignment in
+`task.delegation.writers`. The command accepts only a clean linked worktree from the same Git
+common directory whose HEAD matches the task base SHA. Worktree creation remains an explicit
+main-thread action through the native Codex facility or the approved Git fallback.
 
 Give each subagent:
 
@@ -66,7 +80,7 @@ Reuse the same implementer for fixes to avoid reloading project context. Do not 
 - `BLOCKED`: record the blocker in task history, resolve it, then transition to the appropriate state.
 - stale evidence: rerun `verify`; never override freshness for closure.
 - failing check: fix in the same workspace, then rerun the whole configured matrix.
-- overlapping writes: stop one stream and integrate sequentially.
+- overlapping writes or a writer in the wrong worktree: stop the affected streams and integrate sequentially.
 - detached HEAD: continue working and verifying; create a branch only when the user authorizes integration or persistence.
 
 ## Lessons

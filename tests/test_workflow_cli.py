@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -77,13 +78,15 @@ class WorkflowCliTest(unittest.TestCase):
             "ready",
         )
 
-    def test_micro_skips_task_packet(self) -> None:
+    def test_micro_skips_task_packet_without_imposing_an_agent_cap(self) -> None:
         result = self.workflow("start", "--title", "typo", "--tier", "micro")
         self.assertIn("packet=skipped", result.stdout)
+        self.assertIn("subagent_limit=runtime", result.stdout)
+        self.assertNotIn("subagents=0", result.stdout)
         self.assertFalse((self.repo / "workflow" / "tasks").exists())
 
-    def test_agent_cap_and_cognitive_routing_are_auditable(self) -> None:
-        self.workflow(
+    def test_runtime_managed_delegation_and_cognitive_routing_are_auditable(self) -> None:
+        started = self.workflow(
             "start",
             "--title",
             "routed change",
@@ -100,9 +103,22 @@ class WorkflowCliTest(unittest.TestCase):
             "--routing-note",
             "Reproduction established before implementation.",
         )
+        self.assertIn("subagent_limit=runtime", started.stdout)
+        self.assertIn(
+            "parallel_write_isolation=dedicated-worktree",
+            started.stdout,
+        )
         task_path = self.repo / "workflow" / "tasks" / "task-route" / "task.json"
         task = json.loads(task_path.read_text(encoding="utf-8"))
-        self.assertEqual(task["budget"]["max_subagents"], 0)
+        self.assertNotIn("max_subagents", task["budget"])
+        self.assertEqual(
+            task["delegation"],
+            {
+                "subagent_limit": "runtime",
+                "parallel_write_isolation": "dedicated-worktree",
+                "writers": [],
+            },
+        )
         self.assertEqual(task["cognitive_routing"]["skills"], ["diagnosing-bugs"])
         self.assertEqual(task["cognitive_routing"]["source_refs"], ["issue:42"])
 
@@ -128,15 +144,133 @@ class WorkflowCliTest(unittest.TestCase):
         self.assertIn("## Cognitive routing", brief)
         self.assertIn("diagnosing-bugs", brief)
 
-    def test_agent_limit_defaults_to_tier_and_cannot_exceed_it(self) -> None:
+    def test_assign_writer_records_and_validates_dedicated_worktree(self) -> None:
+        invalid_scope = self.workflow(
+            "start",
+            "--title",
+            "invalid writer scope",
+            "--tier",
+            "medium",
+            "--owned-path",
+            "src/../app.txt",
+            "--task-id",
+            "task-invalid-writer-scope",
+            expected=2,
+        )
+        self.assertIn("must not contain '..'", invalid_scope.stdout)
+
+        self.workflow(
+            "start",
+            "--title",
+            "parallel writers",
+            "--tier",
+            "medium",
+            "--owned-path",
+            "app.txt",
+            "--task-id",
+            "task-writers",
+        )
+        writer_one = self.repo.parent / f"{self.repo.name}-writer-one"
+        writer_two = self.repo.parent / f"{self.repo.name}-writer-two"
+        self.run_cmd("git", "worktree", "add", "--detach", str(writer_one), "HEAD")
+        self.run_cmd("git", "worktree", "add", "--detach", str(writer_two), "HEAD")
+        try:
+            assigned = self.workflow(
+                "assign-writer",
+                "task-writers",
+                "--writer-id",
+                "writer-one",
+                "--worktree-path",
+                str(writer_one),
+                "--owned-path",
+                "app.txt",
+                "--integration-order",
+                "1",
+            )
+            self.assertIn("writer_id=writer-one", assigned.stdout)
+            task = json.loads(
+                (
+                    self.repo
+                    / "workflow"
+                    / "tasks"
+                    / "task-writers"
+                    / "task.json"
+                ).read_text(encoding="utf-8")
+            )
+            writer = task["delegation"]["writers"][0]
+            self.assertEqual(writer["worktree_path"], str(writer_one.resolve()))
+            self.assertEqual(writer["workspace_kind"], "linked-worktree")
+            self.assertTrue(writer["detached"])
+            self.assertEqual(writer["base_sha"], task["workspace"]["base_sha"])
+            self.assertEqual(writer["owned_paths"], ["app.txt"])
+            self.assertEqual(writer["integration_order"], 1)
+
+            overlap_path = "APP.TXT" if os.name == "nt" else "app.txt"
+            overlap = self.workflow(
+                "assign-writer",
+                "task-writers",
+                "--writer-id",
+                "writer-two",
+                "--worktree-path",
+                str(writer_two),
+                "--owned-path",
+                overlap_path,
+                "--integration-order",
+                "2",
+                expected=2,
+            )
+            self.assertIn("overlap", overlap.stdout.lower())
+
+            nested = self.repo / ".nested-writer"
+            self.run_cmd("git", "worktree", "add", "--detach", str(nested), "HEAD")
+            try:
+                nested_result = self.workflow(
+                    "assign-writer",
+                    "task-writers",
+                    "--writer-id",
+                    "nested-writer",
+                    "--worktree-path",
+                    str(nested),
+                    "--owned-path",
+                    "app.txt",
+                    "--integration-order",
+                    "3",
+                    expected=2,
+                )
+                self.assertIn("sibling", nested_result.stdout.lower())
+            finally:
+                subprocess.run(
+                    ["git", "worktree", "remove", "--force", str(nested)],
+                    cwd=self.repo,
+                    check=False,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                )
+        finally:
+            subprocess.run(
+                ["git", "worktree", "remove", "--force", str(writer_two)],
+                cwd=self.repo,
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+            )
+            subprocess.run(
+                ["git", "worktree", "remove", "--force", str(writer_one)],
+                cwd=self.repo,
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+            )
+
+    def test_legacy_agent_limit_config_is_ignored_for_all_tiers(self) -> None:
         config_path = self.repo / "workflow" / "config.json"
         config = json.loads(config_path.read_text(encoding="utf-8"))
-        config["codex_workflow"].pop("max_subagents")
+        config["codex_workflow"]["max_subagents"] = 0
         config_path.write_text(json.dumps(config), encoding="utf-8")
         self.workflow(
             "start",
             "--title",
-            "default agent limit",
+            "legacy zero agent limit",
             "--tier",
             "medium",
             "--task-id",
@@ -151,14 +285,15 @@ class WorkflowCliTest(unittest.TestCase):
                 / "task.json"
             ).read_text(encoding="utf-8")
         )
-        self.assertEqual(default_task["budget"]["max_subagents"], 2)
+        self.assertNotIn("max_subagents", default_task["budget"])
+        self.assertEqual(default_task["delegation"]["subagent_limit"], "runtime")
 
         config["codex_workflow"]["max_subagents"] = 99
         config_path.write_text(json.dumps(config), encoding="utf-8")
         self.workflow(
             "start",
             "--title",
-            "tier capped agents",
+            "legacy high agent limit",
             "--tier",
             "small",
             "--task-id",
@@ -173,7 +308,8 @@ class WorkflowCliTest(unittest.TestCase):
                 / "task.json"
             ).read_text(encoding="utf-8")
         )
-        self.assertEqual(capped_task["budget"]["max_subagents"], 1)
+        self.assertNotIn("max_subagents", capped_task["budget"])
+        self.assertEqual(capped_task["delegation"]["subagent_limit"], "runtime")
 
     def test_route_rejects_empty_or_post_plan_updates(self) -> None:
         self.workflow(
@@ -606,6 +742,7 @@ class WorkflowInitTest(unittest.TestCase):
         self.assertEqual(config["workflow_classes"]["app-change"], ["python"])
         self.assertEqual(config["checks"]["python"][0]["args"], ["-m", "pytest"])
         self.assertNotIn("global_memory_dir", config["codex_workflow"])
+        self.assertNotIn("max_subagents", config["codex_workflow"])
 
     def test_init_refuses_to_overwrite_existing_config(self) -> None:
         workflow = self.repo / "workflow"
