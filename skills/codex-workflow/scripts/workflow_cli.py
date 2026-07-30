@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-ENGINE_VERSION = "1.3.0"
+ENGINE_VERSION = "1.4.0"
 ACTIVE_STATES = {"PLAN", "EXECUTE", "VERIFY", "REVIEW", "FIX", "INTEGRATE", "BLOCKED"}
 ALLOWED = {
     "PLAN": {"EXECUTE", "BLOCKED"},
@@ -842,6 +842,7 @@ def normalized_strings(values: list[str] | None) -> list[str]:
 def planning_state() -> dict[str, Any]:
     return {
         "status": "discovering",
+        "grilling_status": "pending",
         "unresolved_decisions": [],
         "decisions": [],
         "acceptance_criteria": [],
@@ -894,6 +895,8 @@ def validate_plan(repo: Path, task: dict[str, Any]) -> None:
     failures: list[str] = []
     if planning.get("status") != "ready":
         failures.append("planning status is not ready")
+    if planning.get("grilling_status") != "confirmed":
+        failures.append("grilling checkpoint is not confirmed")
     if planning.get("unresolved_decisions"):
         failures.append("unresolved decisions remain")
     if not planning.get("acceptance_criteria"):
@@ -948,6 +951,7 @@ def write_planning_artifact(repo: Path, task: dict[str, Any]) -> None:
         "# Planning Record",
         "",
         f"- status: `{planning['status']}`",
+        f"- grilling_status: `{planning.get('grilling_status', 'pending')}`",
         f"- multi_session: `{str(planning['multi_session']).lower()}`",
         f"- spec_ref: `{planning['spec_ref'] or 'none'}`",
         "",
@@ -1476,6 +1480,7 @@ def cmd_plan(args: argparse.Namespace) -> int:
     if task["state"] not in {"PLAN", "BLOCKED"}:
         raise WorkflowError(f"Planning updates are only allowed in PLAN or BLOCKED, found {task['state']}")
     planning = task.setdefault("planning", planning_state())
+    planning.setdefault("grilling_status", "pending")
     before = json.loads(json.dumps(planning))
     opened = normalized_strings(args.open_decision)
     resolved = normalized_strings(args.resolve_decision)
@@ -1500,6 +1505,22 @@ def cmd_plan(args: argparse.Namespace) -> int:
         planning["spec_ref"], _ = repository_ref(repo, args.spec_ref)
     if args.multi_session:
         planning["multi_session"] = True
+    semantic_change = bool(
+        opened
+        or resolved
+        or decisions
+        or acceptance
+        or args.spec_ref
+        or args.multi_session
+    )
+    if semantic_change:
+        planning["grilling_status"] = "pending"
+    if args.confirm_grilling:
+        if planning["unresolved_decisions"]:
+            raise WorkflowError(
+                "Cannot confirm grilling while unresolved decisions remain"
+            )
+        planning["grilling_status"] = "confirmed"
     if planning == before:
         raise WorkflowError("Provide at least one planning update")
     save_task(
@@ -1514,11 +1535,13 @@ def cmd_plan(args: argparse.Namespace) -> int:
             "acceptance": acceptance,
             "spec_ref": planning["spec_ref"],
             "multi_session": planning["multi_session"],
+            "grilling_status": planning["grilling_status"],
         },
     )
     write_planning_artifact(repo, task)
     print(
         f"task_id={task['task_id']}\nstatus={planning['status']}\n"
+        f"grilling={planning['grilling_status']}\n"
         f"unresolved={len(planning['unresolved_decisions'])}\n"
         f"acceptance={len(planning['acceptance_criteria'])}"
     )
@@ -1548,6 +1571,7 @@ def cmd_ticket(args: argparse.Namespace) -> int:
         [*ticket["acceptance_criteria"], *args.acceptance]
     )
     tickets.sort(key=lambda item: item["id"])
+    planning["grilling_status"] = "pending"
     save_task(repo, task, "TICKET_UPSERTED", ticket)
     write_planning_artifact(repo, task)
     print(
@@ -1892,6 +1916,7 @@ def parser() -> argparse.ArgumentParser:
     plan.add_argument("--acceptance", action="append", default=[])
     plan.add_argument("--spec-ref")
     plan.add_argument("--multi-session", action="store_true")
+    plan.add_argument("--confirm-grilling", action="store_true")
     plan.set_defaults(func=cmd_plan)
 
     ticket = commands.add_parser("ticket")

@@ -76,6 +76,7 @@ class WorkflowCliTest(unittest.TestCase):
             "Requested behavior is verified.",
             "--status",
             "ready",
+            "--confirm-grilling",
         )
 
     def test_micro_skips_task_packet_without_imposing_an_agent_cap(self) -> None:
@@ -405,6 +406,7 @@ class WorkflowCliTest(unittest.TestCase):
             expected=2,
         )
         self.assertIn("planning status is not ready", blocked.stdout)
+        self.assertIn("grilling checkpoint is not confirmed", blocked.stdout)
         self.assertIn("acceptance criteria are empty", blocked.stdout)
         self.assertIn("require a local spec", blocked.stdout)
 
@@ -423,6 +425,13 @@ class WorkflowCliTest(unittest.TestCase):
             "ready",
         )
         self.assertIn("unresolved=1", still_blocked.stdout)
+        unconfirmed = self.workflow(
+            "plan",
+            "task-plan-gate",
+            "--confirm-grilling",
+            expected=2,
+        )
+        self.assertIn("unresolved decisions remain", unconfirmed.stdout)
         blocked = self.workflow(
             "transition",
             "task-plan-gate",
@@ -443,8 +452,63 @@ class WorkflowCliTest(unittest.TestCase):
             "Preserve the existing policy.",
             "--spec-ref",
             "workflow/tasks/task-plan-gate/spec.md",
+            "--confirm-grilling",
         )
         self.workflow("transition", "task-plan-gate", "--to", "EXECUTE")
+
+    def test_plan_gate_requires_grilling_confirmation_before_execution(self) -> None:
+        self.workflow(
+            "start",
+            "--title",
+            "confirmed plan",
+            "--tier",
+            "small",
+            "--task-id",
+            "task-grilling-gate",
+        )
+        self.workflow(
+            "plan",
+            "task-grilling-gate",
+            "--acceptance",
+            "The agreed behavior is verified.",
+            "--status",
+            "ready",
+        )
+
+        blocked = self.workflow(
+            "transition",
+            "task-grilling-gate",
+            "--to",
+            "EXECUTE",
+            expected=2,
+        )
+        self.assertIn("grilling checkpoint is not confirmed", blocked.stdout)
+
+        confirmed = self.workflow(
+            "plan",
+            "task-grilling-gate",
+            "--confirm-grilling",
+        )
+        self.assertIn("grilling=confirmed", confirmed.stdout)
+
+        changed = self.workflow(
+            "plan",
+            "task-grilling-gate",
+            "--acceptance",
+            "A newly agreed constraint is also verified.",
+        )
+        self.assertIn("grilling=pending", changed.stdout)
+        stale = self.workflow(
+            "transition",
+            "task-grilling-gate",
+            "--to",
+            "EXECUTE",
+            expected=2,
+        )
+        self.assertIn("grilling checkpoint is not confirmed", stale.stdout)
+
+        self.workflow("plan", "task-grilling-gate", "--confirm-grilling")
+        self.workflow("transition", "task-grilling-gate", "--to", "EXECUTE")
 
     def test_multi_session_plan_records_tracer_tickets_and_edges(self) -> None:
         self.workflow(
@@ -490,6 +554,7 @@ class WorkflowCliTest(unittest.TestCase):
             "Contract is verified end to end.",
             "--status",
             "ready",
+            "--confirm-grilling",
         )
         self.workflow("transition", "task-tickets", "--to", "EXECUTE")
         task_path = self.repo / "workflow" / "tasks" / "task-tickets" / "task.json"
@@ -538,6 +603,40 @@ class WorkflowCliTest(unittest.TestCase):
             expected=2,
         )
         self.assertIn("schema v2 task is missing planning state", result.stdout)
+
+    def test_existing_schema_v2_plan_without_grilling_status_requires_confirmation(self) -> None:
+        self.workflow(
+            "start",
+            "--title",
+            "pre-grilling task",
+            "--tier",
+            "small",
+            "--task-id",
+            "task-pre-grilling",
+        )
+        self.ready_plan("task-pre-grilling")
+        task_path = (
+            self.repo
+            / "workflow"
+            / "tasks"
+            / "task-pre-grilling"
+            / "task.json"
+        )
+        task = json.loads(task_path.read_text(encoding="utf-8"))
+        task["planning"].pop("grilling_status")
+        task_path.write_text(json.dumps(task), encoding="utf-8")
+
+        blocked = self.workflow(
+            "transition",
+            "task-pre-grilling",
+            "--to",
+            "EXECUTE",
+            expected=2,
+        )
+        self.assertIn("grilling checkpoint is not confirmed", blocked.stdout)
+
+        self.workflow("plan", "task-pre-grilling", "--confirm-grilling")
+        self.workflow("transition", "task-pre-grilling", "--to", "EXECUTE")
 
     def test_blocked_state_cannot_bypass_planning_gate(self) -> None:
         self.workflow(
@@ -660,6 +759,7 @@ class WorkflowCliTest(unittest.TestCase):
             "Behavior passes.",
             "--status",
             "ready",
+            "--confirm-grilling",
         )
         self.workflow("transition", "task-spec-freshness", "--to", "EXECUTE")
         (self.repo / "app.txt").write_text("changed\n", encoding="utf-8")

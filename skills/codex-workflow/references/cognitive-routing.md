@@ -8,6 +8,7 @@ review, integration, and closure.
 
 | Signal | Model-invoked discipline | Exit condition |
 | --- | --- | --- |
+| Every non-micro plan after facts and plan synthesis | `grilling` checkpoint | The user explicitly confirms the shared-understanding summary |
 | Product or design decisions are unresolved | `grilling` | The user has answered one decision at a time and acceptance criteria are clear |
 | Domain terms conflict or a durable trade-off is being made | `domain-modeling` with `grilling` | Vocabulary and any justified ADR are resolved |
 | A public technical fact is missing | `research` | A primary-source artifact answers the blocking question |
@@ -19,6 +20,10 @@ review, integration, and closure.
 
 If a listed skill is unavailable, apply the same discipline in the main thread and record that
 fallback in `--routing-note`.
+
+The first routing row is mandatory. Full questioning remains conditional on unresolved
+user-owned decisions, but the final confirmation checkpoint is not conditional. Record it with
+`workflow.ps1 plan <task-id> --confirm-grilling` only after the user confirms the completed plan.
 
 ## Invocation boundary
 

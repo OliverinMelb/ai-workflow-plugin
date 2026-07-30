@@ -15,9 +15,12 @@ not need to invoke a separate Matt orchestration skill first.
 During PLAN:
 
 1. Inspect repository facts first and record unresolved decisions.
-2. When a decision is genuinely user-owned, apply `grilling` inside this workflow: ask one question
-   at a time, challenge vague answers, and record the resolution. Add `domain-modeling` when
-   terminology or a durable architectural decision matters.
+2. Every non-micro task must complete a `grilling` checkpoint before implementation. When a
+   decision is genuinely user-owned, ask one question at a time, challenge vague answers, and
+   record the resolution. Add `domain-modeling` when terminology or a durable architectural
+   decision matters. When no unresolved decision remains, summarize scope, architecture,
+   non-goals, acceptance criteria, and verification, then wait for the user's explicit
+   confirmation of shared understanding.
 3. Apply `research`, `prototype`, or `diagnosing-bugs` only for the uncertainty each discipline
    owns. Resolve discoverable facts without asking the user.
 4. Synthesize a local `spec.md` for medium and contract work. The spec defines goals, non-goals,
@@ -26,7 +29,8 @@ During PLAN:
    edges and ticket-level acceptance criteria. Keep these local unless the user separately
    authorizes publishing to an external issue tracker.
 6. Mark planning ready only after decisions, acceptance criteria, spec, and required tickets are
-   complete. Then enter EXECUTE.
+   complete. Record the user's final confirmation with `plan --confirm-grilling`; do not edit
+   business code or enter EXECUTE before that gate passes.
 
 This embeds the useful process from Matt's planning skills; it does not implicitly invoke their
 user-facing wrappers or change their `allow_implicit_invocation` setting. `grill-with-docs`,
@@ -129,14 +133,20 @@ streams sequential.
    ```powershell
    workflow.ps1 ticket <task-id> --ticket-id T1 --title "<tracer>" --acceptance "<criterion>"
    workflow.ps1 ticket <task-id> --ticket-id T2 --title "<next slice>" --blocked-by T1 --acceptance "<criterion>"
-   workflow.ps1 plan <task-id> --spec-ref workflow/tasks/<task-id>/spec.md --multi-session --status ready
+   workflow.ps1 plan <task-id> --spec-ref workflow/tasks/<task-id>/spec.md --multi-session --status ready --confirm-grilling
    ```
 
-   For a single-session small task, acceptance criteria and ready status are sufficient:
+   Use `--confirm-grilling` only after presenting the completed plan and receiving the user's
+   explicit confirmation. For a single-session small task, acceptance criteria, confirmation,
+   and ready status are sufficient:
 
    ```powershell
-   workflow.ps1 plan <task-id> --acceptance "<criterion>" --status ready
+   workflow.ps1 plan <task-id> --acceptance "<criterion>" --status ready --confirm-grilling
    ```
+
+   Opening or resolving decisions, changing acceptance criteria or the spec, enabling
+   multi-session planning, or changing tickets resets the checkpoint to `pending`; present the
+   revised plan and confirm it again.
 
    The transition command enforces the planning gate:
 

@@ -26,7 +26,15 @@ workflows. Never change their invocation metadata as a side effect of using this
 7. Decide whether the task is multi-session. If yes, create vertical tracer-bullet tickets rather
    than horizontal layer tickets. Every ticket needs acceptance criteria; `blocked_by` expresses
    sequencing.
-8. Mark the plan ready only when no unresolved decisions remain.
+8. Complete the mandatory grilling checkpoint for every non-micro task. If questions were needed,
+   resolve them one at a time. If no open decisions remain, present the proposed scope,
+   architecture, non-goals, acceptance criteria, and verification as a concise shared-
+   understanding summary.
+9. Wait for explicit user confirmation, then record it with `plan --confirm-grilling`. Do not edit
+   business code or enter EXECUTE before confirmation.
+10. Mark the plan ready only when no unresolved decisions remain and the grilling checkpoint is
+    confirmed. Any later semantic plan or ticket change resets the checkpoint and requires a new
+    summary and confirmation.
 
 ## Ticket execution
 
